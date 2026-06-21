@@ -1,0 +1,9 @@
+data/app-state.json
+codex_api_conversations_restored.md
+prototype-*.png
+!prototype-mobile-clinical-home.png
+!prototype-mobile-clinical-diet.png
+node_modules/
+.env
+.DS_Store
+Thumbs.db
