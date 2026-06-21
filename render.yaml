@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: male-fat-loss-app-prototype
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: APP_ACCESS_PASSWORD
+        value: fit2026
