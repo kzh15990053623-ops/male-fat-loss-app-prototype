@@ -5,6 +5,30 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "check": "node scripts/run-gates.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "bump:version": "node scripts/bump-version.mjs",
+    "check:supabase": "node scripts/check-supabase-readiness.mjs",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:a11y": "playwright test tests/a11y",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "verify": "npm run check && npm run test:e2e",
+    "supabase:login": "npx --yes supabase@2.108.0 login",
+    "supabase:link": "npx --yes supabase@2.108.0 link",
+    "supabase:db:push": "npx --yes supabase@2.108.0 db push"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.62.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6",
+    "vitest": "4.1.11"
   }
 }

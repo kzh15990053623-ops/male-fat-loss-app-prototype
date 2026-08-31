@@ -3,18 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="description" content="面向男性用户的减脂、饮食、训练和健康管理 App 原型" />
-    <meta name="theme-color" content="#f6faf8" />
+    <meta name="description" content="稳减：记录体重、饮食、训练与真实趋势的私人健康手账" />
+    <meta name="theme-color" content="#102A3A" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./src/app-icon.svg" type="image/svg+xml" />
-    <title>稳减 - 男性减脂管理</title>
-    <link rel="stylesheet" href="./src/styles.css" />
+    <link rel="apple-touch-icon" href="./src/app-icon-192.png" />
+    <title>稳减 · 私人健康手账</title>
+    <link rel="stylesheet" href="./src/styles.css?v=20260831-1" />
+    <link rel="modulepreload" href="./src/app.js?v=20260831-1" />
+    <link rel="modulepreload" href="./src/app-actions.js" />
+    <link rel="modulepreload" href="./src/actions/services.js" />
+    <link rel="modulepreload" href="./src/actions/meal.js" />
+    <link rel="modulepreload" href="./src/actions/auth.js" />
+    <link rel="modulepreload" href="./src/actions/settings.js" />
+    <link rel="modulepreload" href="./src/actions/training.js" />
+    <link rel="modulepreload" href="./src/actions/home.js" />
+    <link rel="modulepreload" href="./src/app-render.js" />
+    <link rel="modulepreload" href="./src/render/shared.js" />
+    <link rel="modulepreload" href="./src/render/pages/home.js" />
+    <link rel="modulepreload" href="./src/render/pages/diet.js" />
+    <link rel="modulepreload" href="./src/render/pages/training.js" />
+    <link rel="modulepreload" href="./src/render/pages/data.js" />
+    <link rel="modulepreload" href="./src/render/pages/profile.js" />
+    <link rel="modulepreload" href="./src/app-state.js" />
+    <link rel="modulepreload" href="./src/app-data.js" />
+    <link rel="modulepreload" href="./src/app-storage.js" />
+    <link rel="modulepreload" href="./src/app-sync.js" />
+    <link rel="modulepreload" href="./src/app-logic.js" />
+    <link rel="modulepreload" href="./src/app-utils.js" />
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="./src/app.js"></script>
+    <script type="module" src="./src/app.js?v=20260831-1"></script>
   </body>
 </html>

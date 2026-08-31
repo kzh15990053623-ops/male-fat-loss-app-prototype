@@ -1,3 +1,6 @@
+# 单实例部署假设：server/rate-limit.mjs 的限流计数只保存在进程内存中。
+# 若将来扩容为多实例，需先把计数迁移到共享存储（Redis / Supabase 表），
+# 否则每个实例各自计数，限流阈值会被实例数放大。
 services:
   - type: web
     name: male-fat-loss-app-prototype
@@ -5,6 +8,30 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /api/health
+    maxShutdownDelaySeconds: 60
     envVars:
-      - key: APP_ACCESS_PASSWORD
-        value: fit2026
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_PROBE_TIMEOUT_MS
+        value: "3500"
+      - key: SUPABASE_READINESS_TTL_MS
+        value: "30000"
+      - key: SUPABASE_REQUEST_TIMEOUT_MS
+        value: "12000"
+      - key: LOCAL_AUTH_ENABLED
+        value: "false"
+      - key: NUTRITION_AI_ENDPOINT
+        sync: false
+      - key: NUTRITION_AI_API_KEY
+        sync: false
+      - key: NUTRITION_AI_MODEL
+        sync: false
+      - key: NUTRITION_AI_PROTOCOL
+        value: openai-compatible
+      - key: NUTRITION_AI_TIMEOUT_MS
+        value: "15000"
