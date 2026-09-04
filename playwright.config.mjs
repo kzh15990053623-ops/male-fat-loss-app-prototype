@@ -15,7 +15,8 @@ export default defineConfig({
   workers: 4,
   reporter: [["line"], ["html", { open: "never" }]],
   outputDir: "output/playwright/test-results",
-  snapshotPathTemplate: "{testDir}/{testFileDir}/__screenshots__/{arg}{ext}",
+  // Chromium text rasterization differs by OS; keep CI Linux and local baselines isolated.
+  snapshotPathTemplate: "{testDir}/{testFileDir}/__screenshots__/{platform}/{arg}{ext}",
   use: {
     baseURL: "http://127.0.0.1:4173",
     browserName: "chromium",

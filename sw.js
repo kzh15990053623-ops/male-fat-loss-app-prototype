@@ -58,6 +58,17 @@ self.addEventListener("fetch", (event) => {
 
   if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
 
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request).catch(async () => {
+        const cache = await caches.open(CACHE_NAME);
+        const appShellUrl = new URL("./index.html", self.registration.scope).href;
+        return cache.match(appShellUrl);
+      }),
+    );
+    return;
+  }
+
   event.respondWith(
     fetch(request)
       .then((response) => response)

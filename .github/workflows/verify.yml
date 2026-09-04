@@ -24,7 +24,7 @@ jobs:
 
   playwright:
     name: 浏览器 E2E / 视觉回归
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
