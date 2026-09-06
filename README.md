@@ -24,13 +24,13 @@
 - 退出登录会立即隐藏本机健康记录并撤销离线信任，同时尝试吊销 Supabase 服务端会话；网络或服务端失败时不保证远端会话已完成吊销。
 - 刷新登录状态只接受 HttpOnly Cookie，不再从请求体读取令牌。
 - 本地会自动读取 `.env` 文件。
-- Supabase 数据库脚本已经放在 `supabase/migrations/202606300001_init_app_states.sql`。
+- Supabase 数据库脚本已经放在 `supabase/migrations/`，包含建表、按用户隔离和显式访问授权。
 
 ## 第一次配置 Supabase
 
 1. 打开 Supabase，新建一个项目。
 2. 进入项目后台的 SQL Editor。
-3. 把 `supabase/migrations/202606300001_init_app_states.sql` 里的内容复制进去并运行。
+3. 按文件名顺序执行 `supabase/migrations/` 里的全部 SQL 文件（先建表，再执行 `202609060001_explicit_app_state_grants.sql` 补齐访问授权）。已建过表的项目也需要后一个授权脚本；发布时先核对已经应用的迁移，只运行缺少的部分。
 4. 进入 Project Settings > API / API Keys，复制这两个值：
    - Project URL
    - Publishable key（旧项目也可使用 anon public key）

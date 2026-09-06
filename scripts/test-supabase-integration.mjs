@@ -126,6 +126,7 @@ try {
   );
   assert.equal(firstA.revision, 1);
   assert.equal((await readAppState(sessionA.access_token, userA.id)).state.weight, 82.4);
+  console.log("PASS: migrations allow a signed-in user to create and read their own record");
 
   for (const [label, token] of [
     ["Cross-user", sessionB.access_token],
@@ -136,6 +137,12 @@ try {
       body: { user_id: randomUUID(), state: { weight: 1 } },
     });
     assert.ok([401, 403].includes(inserted.response.status), `${label} insertion must be rejected by the user policy`);
+    const updated = await restRequest(apiUrl, anonKey, token, `app_states?user_id=eq.${encodeURIComponent(userA.id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: { state: { schemaVersion: 3, weight: 1, syncRevision: 999 } },
+    });
+    await assertReadIsDeniedOrEmpty(updated, `${label} update`);
     const removed = await restRequest(apiUrl, anonKey, token, `app_states?user_id=eq.${encodeURIComponent(userA.id)}`, {
       method: "DELETE",
       headers: { Prefer: "return=representation" },
@@ -167,20 +174,8 @@ try {
   );
   await assertReadIsDeniedOrEmpty(anonymousRead, "Anonymous read");
 
-  const crossUserPatch = await restRequest(
-    apiUrl,
-    anonKey,
-    sessionB.access_token,
-    `app_states?user_id=eq.${encodeURIComponent(userA.id)}`,
-    {
-      method: "PATCH",
-      headers: { Prefer: "return=representation" },
-      body: { state: { schemaVersion: 3, weight: 1, syncRevision: 999 } },
-    },
-  );
-  assert.ok(crossUserPatch.response.ok || [401, 403].includes(crossUserPatch.response.status));
-  if (crossUserPatch.response.ok) assert.deepEqual(crossUserPatch.payload, []);
   assert.equal((await readAppState(sessionA.access_token, userA.id)).state.weight, 82.4);
+  console.log("PASS: anonymous and cross-user reads, inserts, updates and deletes cannot access another user's record");
 
   const competingWrites = await Promise.allSettled([
     writeAppState({ state: { schemaVersion: 3, weight: 81.9 }, meals: [], revision: 1 }, sessionA.access_token, userA.id),
@@ -192,6 +187,18 @@ try {
   assert.equal(rejected.length, 1, "Exactly one same-revision write must be rejected as a conflict");
   assert.equal(rejected[0].reason?.code, "STATE_CONFLICT");
   assert.equal((await readAppState(sessionA.access_token, userA.id)).revision, 2);
+  console.log("PASS: exactly one concurrent same-revision save succeeds and the other reports a conflict");
+
+  const ownDelete = await restRequest(apiUrl, anonKey, sessionB.access_token, `app_states?user_id=eq.${encodeURIComponent(userB.id)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=representation" },
+  });
+  assert.equal(ownDelete.response.status, 200);
+  assert.equal(ownDelete.payload?.length, 1, "A signed-in user can delete their own record");
+  assert.equal(ownDelete.payload[0].user_id, userB.id);
+  assert.equal((await readAppState(sessionB.access_token, userB.id)).revision, 0);
+  assert.equal((await readAppState(sessionA.access_token, userA.id)).revision, 2, "Deleting B's record must preserve A's record");
+  console.log("PASS: deleting one's own record leaves the other user's record intact");
 
   await deleteUser(apiUrl, serviceRoleKey, userA.id);
   createdUserIds.delete(userA.id);
@@ -203,6 +210,7 @@ try {
   );
   assert.equal(cascadeCheck.response.status, 200);
   assert.deepEqual(cascadeCheck.payload, [], "Deleting an auth user must cascade-delete the user's app state");
+  console.log("PASS: deleting an auth account removes its associated app record");
 } finally {
   await Promise.all([...createdUserIds].map((userId) => deleteUser(apiUrl, serviceRoleKey, userId)));
 }
