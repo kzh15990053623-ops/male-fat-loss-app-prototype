@@ -11,7 +11,7 @@ import {
   trendInsight,
   weeklyActionPlan,
 } from "../../app-logic.js";
-import { pageHeader, miniMetric, barCard, lineChart } from "../shared.js";
+import { pageHeader, miniMetric, barCard, lineChart, chartDataDetails } from "../shared.js";
 
 export function renderDataLab() {
   const weights = weightSeries().slice(-7);
@@ -84,8 +84,8 @@ export function renderDataLab() {
         <div class="weekly-action-list">${actions.map((action) => `<article class="weekly-action-item"><div><strong>${escapeHtml(action.title)}</strong><span>${escapeHtml(action.meta)}</span><p>${escapeHtml(action.detail)}</p></div><button class="mini-icon-button" type="button" data-week-action="${escapeHtml(action.target)}" aria-label="执行${escapeHtml(action.title)}">${icon("arrow")}</button></article>`).join("")}</div>
       </section>
 
-      ${balanceValues.length ? `<div class="two-chart-grid">${barCard("预算差额", balanceValues, "kcal")}${barCard("运动消耗", burnValues, "kcal")}</div>` : ""}
-      ${completions.length ? `<section class="section-block"><div class="section-title"><h2>记录完成率</h2><span>${Math.round(avg(completions.map((item) => item.value)))}%</span></div><div class="completion-row" role="img" aria-label="近 ${escapeHtml(completions.length)} 日平均完成率 ${escapeHtml(Math.round(avg(completions.map((item) => item.value))))}%">${completions.map((item) => `<span data-height="${escapeHtml(item.value)}"><i>${escapeHtml(item.date.slice(5))}</i></span>`).join("")}</div></section>` : ""}
+      ${balanceValues.length ? `<div class="two-chart-grid">${barCard("预算差额", balances, "kcal")}${barCard("运动消耗", burns, "kcal")}</div>` : ""}
+      ${completions.length ? `<section class="section-block"><div class="section-title"><h2>记录完成率</h2><span>${Math.round(avg(completions.map((item) => item.value)))}%</span></div><div class="completion-row" aria-hidden="true">${completions.map((item) => `<span data-height="${escapeHtml(item.value)}"><i>${escapeHtml(item.date.slice(5))}</i></span>`).join("")}</div>${chartDataDetails("记录完成率", completions, "%")}</section>` : ""}
     `
     }
   `;

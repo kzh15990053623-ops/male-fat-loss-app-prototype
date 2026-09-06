@@ -44,7 +44,13 @@ export function cookieFromRequest(request, name) {
     .reduce((value, part) => {
       if (value) return value;
       const [key, ...rawValue] = part.split("=");
-      return key === name ? decodeURIComponent(rawValue.join("=")) : "";
+      if (key !== name) return "";
+      try {
+        return decodeURIComponent(rawValue.join("="));
+      } catch {
+        // An invalid cookie is an absent credential, not a server error.
+        return "";
+      }
     }, "");
 }
 

@@ -557,6 +557,60 @@ button:active {
   background: var(--orange);
 }
 
+.chart-data-details {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: var(--font-caption);
+}
+
+.chart-data-details summary {
+  display: flex;
+  min-height: var(--tap);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.chart-data-details summary::after {
+  color: var(--green);
+  content: "+";
+  font-family: var(--font-data);
+  font-size: 1rem;
+}
+
+.chart-data-details[open] summary::after {
+  content: "−";
+}
+
+.chart-data-details dl {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.chart-data-details dl > div {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.chart-data-details dt,
+.chart-data-details dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chart-data-details dd {
+  color: var(--ink);
+  font-family: var(--font-data);
+  font-weight: 700;
+  text-align: right;
+}
+
 .completion-row {
   display: flex;
   height: 142px;
@@ -956,6 +1010,21 @@ button:active {
 
 .settings-group h3 {
   margin-bottom: 14px;
+}
+
+.settings-note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  line-height: 1.55;
+}
+
+.settings-note + .settings-note {
+  margin-top: 8px;
+}
+
+.toggle-row + .settings-note {
+  margin-top: 10px;
 }
 
 .settings-actions {

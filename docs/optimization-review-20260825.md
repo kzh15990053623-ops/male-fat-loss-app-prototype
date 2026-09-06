@@ -1,12 +1,14 @@
 # 项目优化方案（2026-08-25 审阅结论）
 
+> 历史快照：以下状态、数量与 CI 说明仅反映各段注明的历史日期，不代表当前项目。当前使用与验收方式以 [README](../README.md) 和实际命令、对应提交的 CI 结果为准。
+
 > 本文档为审阅结论与优化建议。所有关键结论均已在源码中逐条核实，行号以审阅时工作区为准。
 >
 > **实施进度**：P0 安全节全部完成——第一批（1.1 属性转义统一 + 门禁、1.2 HSTS）、第二批（2.2 静态服务异步 IO、2.3 Brotli 压缩、2.4 modulepreload）、第三批 2.1 第一步与第二步（按页短路局部渲染 + 页面基线比对跳过无关重建 + 焦点/光标恢复，keyed diff 第三步经评估关闭）、4.1（vitest 单测 64 用例接入 check 链）、1.4（限流单实例标注于 render.yaml/README + 超限清理改为 64 桶有界惰性扫描）、1.5（scrypt 显式提参 N=2^15/r=8/p=1 + maxmem 64MB，实测中位 81ms；新记录存储 cost 块，老记录按 Node 默认参数回验）、1.3（7 处内联 style 改 data-* + `hydrateDynamicStyles()` CSSOM 水合，CSS 规则改用 `calc(var(--x) * 1%)` 取值，CSP `style-src` 移除 `'unsafe-inline'`，门禁新增内联样式/水合接线/CSP 三条断言）。期间定位并修复了 settings 视觉用例的入场动画/截图竞态（预先存在的 flaky）。第四批（3.1-3.4 架构拆分）完成——3.1 渲染层只消费 state；3.2 巨型文件拆分（a. click/submit/input/change 四张事件路由表查表分发；b. render 拆为 `render/shared.js` + `render/pages/` 五页模块，`app-render.js` 收敛为外壳+弹层+facade；c. actions 拆为 `actions/services.js` 跨域 UI 服务 + meal/auth/settings/training/home 五个业务域，`app-actions.js` 收敛为入口+事件路由层，事件绑定改为 `initApp()` 一次性挂载，click 路由表化同时消除了 16 处"函数定义与分支内联体重复"的旧残留——其中 13 个成为路由表处理器，3 个守卫包装因仅一行守卫逻辑直接内联进表项删除）；3.3 重复模式收敛；3.4 `app-sync.js` 拆出 `app-data.js`（数据模型/迁移/合并）与 `app-storage.js`（localStorage 封装），主文件收敛为同步编排。四处清单（index.html modulepreload、sw.js APP_SHELL v13、package.json check、回归门禁 frontendFiles）同步登记；期间修复路由表一处首参误传（`cancelMealNutrition` 收到控件元素覆盖默认 message）。验证：`npm run check` 全绿、e2e 54/54（含 9 项视觉基线，确认像素级等价）。第五批（4.2-4.6 工程化）完成——4.2 ESLint flat config（浏览器/Node/SW 三环境 globals 分治，tests 声明 browser globals 因 evaluate 回调实际在浏览器执行）+ Prettier，存量清零（删 3 处真实未用导入、修 1 处正则转义、`ignoreRestSiblings` 豁免 app-data 解构剔除模式），52 文件全量格式化；4.5 `check` 收敛为 `scripts/run-gates.mjs` 单入口（语法检查按目录自动发现 56 文件，validate 五脚本并行，vitest/eslint/prettier 并行，回归门禁串行收尾），新增 `lint`/`format` scripts；4.4 `scripts/bump-version.mjs` 一键更新全部版本戳（默认日期序号或 `--shell` 指定，CACHE_NAME 递增，写后自动过 validate-version-sync），实测 20260822-1→20260828-1 / v13→v14；4.3 CI 拆双并行 job（node-check 无浏览器 / playwright E2E）+ `~/.cache/ms-playwright` 按 lock 哈希缓存 + 失败上传报告工件；4.6 六份历史文档顶部加"历史快照"标注指向 README 权威口径，README 更新命令/发布/CI 三节。**复审修正轮（2026-08-29）**：五批收官后经独立复审退回，9 项发现全部闭环——P0 并发同步静默丢数据（引入 `syncRevision` 乐观并发：Supabase 条件 PATCH、local-auth mutateStore 内校验、409 携带服务端 payload 客户端按天合并重试）；P1×5（URL 解析移入异常边界 + raw-socket 回归、JSON 改 Buffer 累计按字节限流、限流采信 CF-Connecting-IP、注销只删 Auth 用户依赖级联、eslint/prettier 忽略报告目录恢复全量门禁）；P2×3（Brotli `params[BROTLI_PARAM_QUALITY]` + q=0 协商、CI 工件路径与 HTML reporter、run-gates 结果索引对齐 + bump-version NaN 防护）。新增 11 个单测与 1 个 409 冲突 E2E，最终 130 项自动化检查全绿（vitest 75/75、E2E 55/55 含 11 视觉基线）。
 
-## 2026-08-30 至 08-31 · 后续工程化与同步安全收口（最新口径）
+## 2026-08-30 至 08-31 · 后续工程化与同步安全收口（历史口径）
 
-> 本节是当前实施状态，覆盖上方截至 2026-08-29 的“130 项”历史口径；下方原始审阅正文保留用于追溯当时的问题与决策。
+> 本节是截至 2026-08-31 的实施快照，覆盖上方截至 2026-08-29 的“130 项”历史口径；下方原始审阅正文保留用于追溯当时的问题与决策。
 
 - **Phase 0 同步安全**：持久化序列化不再自行制造时间戳；业务数据指纹相同的保存是严格 no-op，只有真实业务变更才推进每日记录时间与本地 mutation token。同步改为单 Promise 串行排空，写入期间发生的新变更必须进入下一轮 PUT。首次真实编辑时把最后确认的服务端快照作为本地 `syncBase` 与工作副本原子持久化；409 以 base/local/remote 做字段级三方合并，日记录与日志按日期、餐次/活动/模板按稳定 ID 合并，删除优先避免复活。缺少可信基线时停止自动覆盖；服务端确认必须同时包含有效 `revision` 与 `updatedAt`，否则保持待同步状态。
 - **严格乐观并发**：Supabase 与本机账号首次写入也纳入 CAS；缺失版本以 409 `STATE_REVISION_REQUIRED` 拒绝，非法版本以 400 拒绝，过期或竞争写入以 409 `STATE_CONFLICT` 返回当前载荷。客户端按天合并后只重试一次。
