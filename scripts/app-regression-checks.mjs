@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { connect, createServer } from "node:net";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeAppData } from "../server.mjs";
+import { normalizeAppData } from "../server/data.mjs";
 import { discoverFrontendJsFiles } from "./frontend-files.mjs";
 
 // Sends pre-formed raw bytes and returns the raw response. fetch() cannot
@@ -28,17 +28,6 @@ async function rawSocketResponse(port, rawRequest) {
   });
 }
 
-async function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => resolve(typeof address === "object" && address ? address.port : 0));
-    });
-  });
-}
-
 async function waitForServer(origin) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 6000) {
@@ -53,13 +42,10 @@ async function waitForServer(origin) {
 }
 
 async function withServer(runChecks) {
-  const port = await freePort();
-  const origin = `http://127.0.0.1:${port}`;
   const localAuthDirectory = await mkdtemp(join(tmpdir(), "weight-lab-regression-"));
-  const child = spawn(process.execPath, ["server.mjs"], {
+  const child = spawn(process.execPath, [join("scripts", "start-regression-server.mjs")], {
     env: {
       ...process.env,
-      PORT: String(port),
       SUPABASE_URL: "https://your-project-ref.supabase.co",
       SUPABASE_ANON_KEY: "your-supabase-anon-key",
       LOCAL_AUTH_ENABLED: "true",
@@ -71,13 +57,50 @@ async function withServer(runChecks) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
+  let readyBuffer = "";
+  let readySettled = false;
+  let resolveReady;
+  let rejectReady;
+  const ready = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const readyTimeout = setTimeout(() => {
+    if (!readySettled) {
+      readySettled = true;
+      rejectReady(new Error("Timed out waiting for regression server to report its local port"));
+    }
+  }, 6000);
   child.stdout.on("data", (chunk) => {
-    output += chunk;
+    const text = chunk.toString();
+    output += text;
+    readyBuffer += text;
+    const match = readyBuffer.match(/REGRESSION_SERVER_READY (http:\/\/127\.0\.0\.1:\d+)/);
+    if (!readySettled && match) {
+      readySettled = true;
+      clearTimeout(readyTimeout);
+      resolveReady(match[1]);
+    }
   });
   child.stderr.on("data", (chunk) => {
     output += chunk;
   });
+  child.once("error", (error) => {
+    if (!readySettled) {
+      readySettled = true;
+      clearTimeout(readyTimeout);
+      rejectReady(error);
+    }
+  });
+  child.once("exit", (code) => {
+    if (!readySettled) {
+      readySettled = true;
+      clearTimeout(readyTimeout);
+      rejectReady(new Error(`Regression server exited before readiness (code ${code})`));
+    }
+  });
   try {
+    const origin = await ready;
     await waitForServer(origin);
     await runChecks(origin);
   } finally {

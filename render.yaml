@@ -6,11 +6,13 @@ services:
     name: male-fat-loss-app-prototype
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /api/health
     maxShutdownDelaySeconds: 60
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

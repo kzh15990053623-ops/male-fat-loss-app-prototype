@@ -1,7 +1,15 @@
 import { state, runtime } from "../app-state.js";
 import { todayKey, motionPreference } from "../app-utils.js";
 import { todayTasks } from "../app-logic.js";
-import { appShell, shellSignature, patchCurrentPage, renderCurrentPage, hydrateDynamicStyles } from "../app-render.js";
+import {
+  appShell,
+  shellSignature,
+  patchCurrentPage,
+  renderCurrentPage,
+  hydrateDynamicStyles,
+  captureSettingsPanelState,
+  restoreSettingsPanelState,
+} from "../app-render.js";
 
 const tabKeys = new Set(["home", "diet", "training", "data", "profile"]);
 const focusTaskLabels = ["饮食记录", "训练", "喝水"];
@@ -53,7 +61,9 @@ export function showToast(message) {
 }
 
 function reminderDelayMs() {
-  const [hour = "21", minute = "30"] = String(state.preferences.reminderTime || "21:30").split(":");
+  const configuredTime = String(state.preferences.reminderTime || "");
+  const safeTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(configuredTime) ? configuredTime : "21:30";
+  const [hour, minute] = safeTime.split(":");
   const target = new Date();
   target.setHours(Number(hour), Number(minute), 0, 0);
   if (target.getTime() <= Date.now()) target.setDate(target.getDate() + 1);
@@ -65,23 +75,48 @@ export function scheduleLocalReminder() {
   if (!state.preferences.pushEnabled) return;
   runtime.reminderTimer = setTimeout(() => {
     const message = "记得补全今天的饮食、训练和体重记录";
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("稳减记录提醒", { body: message, icon: "./src/app-icon-192.png" });
-    }
     showToast(message);
+    void showSystemReminder(message);
     scheduleLocalReminder();
   }, reminderDelayMs());
 }
 
-export async function ensureReminderPermission() {
-  if (!state.preferences.pushEnabled || !("Notification" in window)) return;
-  if (Notification.permission === "default") {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      state.preferences.pushEnabled = false;
-      showToast("没有通知权限，已保留为应用内提醒");
-    }
+export async function showSystemReminder(message) {
+  if (!("Notification" in window) || Notification.permission !== "granted" || !("serviceWorker" in navigator)) return false;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration || typeof registration.showNotification !== "function") return false;
+    await registration.showNotification("稳减记录提醒", {
+      body: message,
+      icon: "/src/app-icon-192.png",
+      tag: "daily-record-reminder",
+    });
+    return true;
+  } catch {
+    // 系统通知失败不能阻断应用内提醒、下一次排程或设置保存。
+    return false;
   }
+}
+
+export async function ensureReminderPermission() {
+  if (!state.preferences.pushEnabled) return false;
+  if (!("Notification" in window)) {
+    showToast("此浏览器不支持系统通知，应用打开时仍会提醒");
+    return false;
+  }
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") {
+    showToast("没有系统通知权限，应用打开时仍会提醒");
+    return false;
+  }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") return true;
+  } catch {
+    // 权限 API 在部分浏览器/非用户手势场景会拒绝；应用内计时仍然有效。
+  }
+  showToast("没有系统通知权限，应用打开时仍会提醒");
+  return false;
 }
 
 export function scrollSurfaceTo(selector) {
@@ -330,11 +365,13 @@ export function render() {
     animateHomeCountUps({ force: animateHomeEntry });
     return;
   }
+  const settingsPanelState = captureSettingsPanelState(root);
   root.innerHTML = appShell();
   runtime.pendingTabEnter = false;
   runtime.lastShellSignature = shellSignature();
   // 主应用分支下记录页面基线，让下一次签名一致的渲染可以比对跳过无关重建
   runtime.lastPageHtml = !state.appLoading && !state.authRequired && state.setupCompleted ? renderCurrentPage() : "";
   hydrateDynamicStyles(root);
+  restoreSettingsPanelState(root, settingsPanelState);
   animateHomeCountUps({ force: animateHomeEntry });
 }

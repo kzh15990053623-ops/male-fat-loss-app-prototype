@@ -11,24 +11,26 @@
 - 新用户第一次登录会先完成基础目标设置，不再直接使用演示记录。
 - 每天的饮食、训练、喝水、步数、睡眠和任务状态会按日期归档。
 - 多设备冲突按天合并：每天的记录、体重和腰围日志按日期取较新一方，不再整包覆盖。
-- 体重和腰围趋势会按日期更新，同一天覆盖、跨天追加；趋势日志两端统一保留最近 90 条，按天归档记录保留最近 180 天。
-- 断网时会先保存在本机，恢复联网或回到前台后会自动重试同步，也可以手动重试。
+- 体重和腰围趋势会按日期更新，同一天覆盖、跨天追加；趋势日志两端统一保留最近 90 条，日记录保留最近 180 个记录日。设置中说明保留规则并提供导出备份；达到上限会裁掉最早记录。
+- 跨午夜或从后台返回时，先归档前一天，再加载当天记录；延迟保存不会把昨天的饮食、饮水、步数或训练复制到今天。
+- 已打开的应用断网时先保存在本机。断网重新打开需要此前成功登录，并在设置中明确开启“信任此设备离线查看”（默认关闭）；联网或手动重试时先验证同一账号、读取云端版本，再合并上传本地修改。
+- 离线信任只保存在当前浏览器、当前账号中，不上传云端。开启后，能使用此浏览器的人也能查看缓存；共用设备请勿开启。退出登录、删除账号或服务器确认会话失效会撤销信任；离线期间无法提前得知服务端的撤销。
 - “我的”页面可以导出数据，也可以通过应用内确认弹窗清空本地与云端数据。
 - 设置里可以关闭 AI 辅助，关闭后饮食页只保留手动填写。
-- 设置里可以开启记录提醒，浏览器支持通知时会按设定时间提醒补全记录。
+- 设置里可以开启“应用内记录提醒”：仅在应用保持打开、浏览器允许计时器运行时提醒；关闭或挂起应用后不保证提醒。系统通知权限被拒绝或发送失败，不影响应用内提醒。当前没有后台定时推送服务。
 - 热量口径固定为“剩余可摄入 = 每日预算 - 已摄入”，运动消耗独立展示，不自动加回预算。
 - AI 营养识别只接受真实模型结果；限流、离线、超时或服务失败时明确提示，并保留手动记录。
 - 登录、注册和 AI 接口有服务端速率限制（认证接口按 IP，AI 接口按用户，含每日配额），超限返回 429 和 Retry-After。
-- 退出登录会同时吊销 Supabase 服务端会话，泄露的刷新令牌即刻失效。
+- 退出登录会立即隐藏本机健康记录并撤销离线信任，同时尝试吊销 Supabase 服务端会话；网络或服务端失败时不保证远端会话已完成吊销。
 - 刷新登录状态只接受 HttpOnly Cookie，不再从请求体读取令牌。
 - 本地会自动读取 `.env` 文件。
-- Supabase 数据库脚本已经放在 `supabase/migrations/202606300001_init_app_states.sql`。
+- Supabase 数据库脚本已经放在 `supabase/migrations/`，包含建表、按用户隔离和显式访问授权。
 
 ## 第一次配置 Supabase
 
 1. 打开 Supabase，新建一个项目。
 2. 进入项目后台的 SQL Editor。
-3. 把 `supabase/migrations/202606300001_init_app_states.sql` 里的内容复制进去并运行。
+3. 按文件名顺序执行 `supabase/migrations/` 里的全部 SQL 文件（先建表，再执行 `202609060001_explicit_app_state_grants.sql` 补齐访问授权）。已建过表的项目也需要后一个授权脚本；发布时先核对已经应用的迁移，只运行缺少的部分。
 4. 进入 Project Settings > API / API Keys，复制这两个值：
    - Project URL
    - Publishable key（旧项目也可使用 anon public key）
@@ -47,7 +49,10 @@ SUPABASE_ANON_KEY=你的 Publishable key
 
 ## 本地运行
 
+使用 Node.js 22（与 `.nvmrc`、`package.json`、CI 和 Render 配置一致），首次安装按锁文件执行：
+
 ```powershell
+npm ci
 npm run dev
 ```
 
@@ -77,7 +82,7 @@ npm run check:supabase
 
 数据保存到 Supabase 的 `public.app_states` 表。每个用户只有一条自己的 App 状态记录，里面包含当前页面需要的目标、饮食、训练、体重、腰围等数据。
 
-当前 App 数据结构版本是 `schemaVersion: 3`。迁移会保留现有饮食、训练、体重、腰围与偏好数据，并移除旧运动基数和演示趋势字段。为了保持数据层简单，数据库本轮仍不拆表；每天的记录会放在这条用户状态里的 `dailyRecords` 中，只保留最近 180 天（滚动窗口），体重/腰围趋势日志保留最近 90 条，前后端口径一致并有脚本校验。
+当前 App 数据结构版本是 `schemaVersion: 3`。迁移会保留现有饮食、训练、体重、腰围与偏好数据，并移除旧运动基数和演示趋势字段。数据库仍不拆表；每天的记录放在用户状态里的 `dailyRecords` 中，按日期排序保留最近 180 个记录日，体重/腰围趋势日志保留最近 90 条，前后端口径一致并有脚本校验。未记录的日期不占日记录名额。
 
 这张表已经开启 RLS，也就是数据库层面的“用户隔离锁”。简单说：A 用户登录后只能看到 A 自己的数据，不能读写 B 用户的数据。
 
@@ -96,7 +101,13 @@ npm run test:e2e
 npm run verify
 ```
 
-`npm run check` 由 `scripts/run-gates.mjs` 统一调度：语法检查按目录自动发现（当前 67 个 JS/MJS 文件，新增文件无需登记）、六个 validate 脚本并行、Vitest 单测与 V8 覆盖率门禁、ESLint、Prettier 格式检查及应用运行时回归门禁。`npm run test:unit` 单独运行 Vitest，`npm run test:coverage` 生成文本、HTML 与 JSON 覆盖率报告；当前全局基线下限为 statements 56.78%、branches 50.07%、functions 61.14%、lines 59.17%，分项阈值见 `vitest.config.mjs`。渲染和 actions 等依赖 DOM 的模块不纳入 Node 覆盖率阈值，由 Playwright 覆盖。`npm run lint` 单独跑 ESLint，`npm run format` 用 Prettier 全量格式化。`npm run bump:version` 一键更新应用壳版本戳并自校验（见“发布与缓存”）。`npm run check:supabase` 是针对当前 `.env` 的无副作用真实云端连通性检查。`npm run test:a11y` 单独运行可访问性用例；`npm run test:e2e` 使用固定版本 Chromium 覆盖 DOM、两种认证模式、登录与首次设置、三类记录、离线同步恢复、PWA 离线应用壳、AI 全状态、三档视口和视觉回归，首次运行前可执行 `npx playwright install chromium`。`npm run verify` 顺序运行 `check` 与全部 Playwright 用例，但不会创建真实云端用户。
+`npm run check` 由 `scripts/run-gates.mjs` 统一调度：语法文件按目录自动发现、六个 validate 脚本并行、Vitest 单测与 V8 覆盖率门禁、ESLint、Prettier 及应用运行时回归。文件数和测试数以本次命令输出为准。测试服务器统一排除 Fetch 禁止端口，并由实际运行的服务器报告端口，避免随机端口失败与“释放后再绑定”的抢占窗口。
+
+`npm run test:unit` 单独运行单测，`npm run test:coverage` 生成报告；原有覆盖率阈值保留，API、HTTP、安全限流和营养服务新增独立阈值，见 `vitest.config.mjs`。依赖 DOM 的交互另由 Playwright 验证。`npm run lint` 检查代码，`npm run format` 全量格式化，`npm run bump:version` 更新应用壳版本并校验。
+
+`npm run test:e2e` 使用固定版本 Chromium，覆盖登录、设置、日常记录、跨午夜、受信任设备离线冷启动与重连、拒绝跨账号上传、AI、触控/键盘、三档竖屏及横屏、视觉回归；首次执行前运行 `npx playwright install chromium`。`npm run test:a11y` 单独运行可访问性用例。`npm run verify` 顺序执行 `check` 和全部浏览器测试，但模拟接口测试不证明真实数据库隔离。
+
+`npm run check:supabase` 仅对当前配置做无副作用连通性检查。真实数据库的迁移、两用户隔离、并发冲突及账号删除级联，使用下文的独立本地集成测试验证。
 
 ```powershell
 npm run supabase:login
@@ -163,4 +174,18 @@ NUTRITION_AI_TIMEOUT_MS=15000
 
 ## 持续集成
 
-工作区内有一份尚未跟踪、尚未推送的 `.github/workflows/verify.yml` 候选配置，设计为两个并行 job：node-check（语法、校验脚本、Vitest+coverage、ESLint、Prettier、回归门禁，无需浏览器）与 playwright（E2E 与视觉回归），并按 `package-lock.json` 哈希缓存 Chromium。它尚未在远端 Actions 实际运行，因此当前不能视为已启用 CI，也没有缓存命中率或提速数据；浏览器缓存预热同样延期到工作流获准提交并首次跑通之后。本地 bundle 收益复评见 [bundle 收益复评（2026-08-30）](docs/bundle-evaluation-20260830.md)。
+仓库已包含受版本管理的 `.github/workflows/verify.yml`：两个并行 job 分别执行 Node 检查和浏览器测试，使用只读仓库权限、运行超时、同分支新运行取消旧运行及 Chromium 缓存。具体提交是否通过，须查看该提交对应的 Actions 结果；本机通过不等同于远端 CI 或线上验收通过。
+
+新增 `.github/workflows/supabase-integration.yml` 在拉取请求中自动运行，也支持手动与每日运行，在独立 Docker 环境里应用真实迁移并验证数据权限。正式发布前，候选提交必须通过这项数据库测试和普通 verify；手动运行必须选择候选提交所在分支，并核对运行 SHA。生产部署后仍需单独核对实际数据库和部署版本。
+
+本机数据库测试需要已安装并运行 Docker：
+
+```powershell
+npm run supabase:test:start
+npm run test:supabase
+npm run supabase:test:stop
+```
+
+这些命令仅接受专用本地项目 `fitness-app-integration`、回环地址和端口 55321/55322，不读取生产项目作为测试目标，不执行远端 push 或数据库 reset。只创建并清理本轮测试账号；停止时保留本地栈数据。Docker 不可用时明确报告 `NOT RUN`，不能视为测试通过。现有栈不会被自动重置，迁移有变化时应在新的隔离环境验证其可从零应用。
+
+加载速度的后续实验保留在 [bundle 收益复评（2026-08-30）](docs/bundle-evaluation-20260830.md)；合并脚本尚未接入生产，需真实部署条件下的对照测量后再决定。

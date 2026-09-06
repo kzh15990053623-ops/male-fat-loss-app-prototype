@@ -1,27 +1,26 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import { etagForContent, serveStaticRequest } from "../../server/static.mjs";
+import { closeHttpServer, startFetchSafeHttpServer } from "../../scripts/test-http-server.mjs";
 
 let origin;
 let server;
 
 beforeAll(async () => {
-  server = createServer((request, response) => {
-    const url = new URL(request.url || "/", "http://localhost");
-    serveStaticRequest(request, response, url).catch((error) => {
-      response.destroy(error);
-    });
-  });
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  origin = `http://127.0.0.1:${address.port}`;
+  const started = await startFetchSafeHttpServer(() =>
+    createServer((request, response) => {
+      const url = new URL(request.url || "/", "http://localhost");
+      serveStaticRequest(request, response, url).catch((error) => {
+        response.destroy(error);
+      });
+    }),
+  );
+  server = started.server;
+  origin = started.origin;
 });
 
 afterAll(async () => {
-  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  await closeHttpServer(server);
 });
 
 const assetUrl = () => `${origin}/src/app-render.js`;

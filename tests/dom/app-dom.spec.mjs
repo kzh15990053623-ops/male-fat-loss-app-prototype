@@ -347,7 +347,7 @@ test("设置提醒开关保留语义、键盘操作与保存结果，正文色�
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   const transitionDuration = await page
-    .locator(".toggle-track")
+    .locator("[data-setting-push] + .toggle-track")
     .evaluate((element) => getComputedStyle(element, "::after").transitionDuration);
   expect(parseFloat(transitionDuration)).toBeLessThanOrEqual(0.001);
 });

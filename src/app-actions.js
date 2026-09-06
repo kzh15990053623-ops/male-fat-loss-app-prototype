@@ -6,6 +6,7 @@ import {
   refreshSession,
   resetAppData,
   loadStoredState,
+  loadTrustedOfflineState,
   loadServerState,
   saveStoredState,
   saveStoredStateThrottled,
@@ -14,6 +15,7 @@ import {
   flushPendingInputSave,
 } from "./app-sync.js";
 import { hasBlockingOverlay } from "./app-render.js";
+import { rolloverToTodayIfNeeded } from "./app-data.js";
 import {
   render,
   showToast,
@@ -73,7 +75,7 @@ import {
   exportUserData,
   clearUserData,
   applyRecommendedCalories,
-  handleSettingNumberInput,
+  handleSettingControlInput,
 } from "./actions/settings.js";
 import {
   completeWorkoutFromCard,
@@ -93,6 +95,65 @@ import { adjustHabitMetric, toggleTaskByLabel, followCoachAction, saveBodyMetric
 const mealDraftFieldSelector =
   "[data-meal-slot], [data-meal-calories], [data-meal-food], [data-meal-amount], [data-meal-unit], [data-meal-cooking], [data-meal-oil], [data-meal-sauce], [data-meal-protein], [data-meal-carbs], [data-meal-fat]";
 let delegatedEventsBound = false;
+let dayBoundaryTimer;
+let reconnectPromise;
+
+async function retryConnection({ silent = false } = {}) {
+  if (reconnectPromise) return reconnectPromise;
+  if (runtime.authSessionStatus !== "offline-unverified" && !runtime.offlineSyncReadRequired) return syncStateNow({ silent });
+  runtime.offlineSyncReadRequired = true;
+  flushPendingInputSave();
+  reconnectPromise = (async () => {
+    const session = await refreshSession({ detailed: true });
+    if (session.reason === "stale-session") return false;
+    if (session.status === "authenticated") {
+      const generation = runtime.authSessionGeneration;
+      state.authRequired = false;
+      // Read and merge the current server revision before sending offline edits.
+      const loaded = await loadServerState();
+      if (generation !== runtime.authSessionGeneration) return false;
+      if (loaded) runtime.offlineSyncReadRequired = false;
+      if (loaded && state.syncPending) await syncStateNow({ silent });
+      render();
+      return loaded;
+    }
+    if (session.status === "offline-unverified" && loadTrustedOfflineState()) {
+      render();
+      return false;
+    }
+    resetAppData({ blank: true });
+    state.authRequired = true;
+    state.authEmail = readStorageValue(AUTH_EMAIL_KEY);
+    render();
+    void checkAuthReadiness({ force: true });
+    return false;
+  })();
+  try {
+    return await reconnectPromise;
+  } finally {
+    reconnectPromise = null;
+  }
+}
+
+function refreshCurrentDay({ renderNow = true } = {}) {
+  if (state.authRequired || state.appLoading || !rolloverToTodayIfNeeded()) return false;
+  saveStoredState();
+  if (renderNow) render();
+  return true;
+}
+
+function scheduleDayBoundary() {
+  clearTimeout(dayBoundaryTimer);
+  const nextDay = new Date();
+  nextDay.setHours(24, 0, 0, 0);
+  dayBoundaryTimer = setTimeout(
+    () => {
+      refreshCurrentDay();
+      scheduleDayBoundary();
+    },
+    Math.max(1, nextDay.getTime() - Date.now()),
+  );
+}
 
 function handleAppActionCommand(action) {
   if (action === "settings" || action === "goal") openSettings(action);
@@ -127,7 +188,9 @@ function handleAppSubmit(event) {
   for (const route of submitRoutes) {
     if (form.matches(route.selector)) {
       event.preventDefault();
+      const changedDay = refreshCurrentDay({ renderNow: false });
       route.run(form);
+      if (changedDay) render();
       return;
     }
   }
@@ -164,8 +227,8 @@ const inputRoutes = [
     },
   },
   {
-    selector: "[data-setting-field]",
-    run: handleSettingNumberInput,
+    selector: "[data-setting-control]",
+    run: handleSettingControlInput,
   },
 ];
 
@@ -174,13 +237,16 @@ function handleAppInput(event) {
   if (!(input instanceof Element)) return;
   for (const route of inputRoutes) {
     if (input.matches(route.selector)) {
+      const changedDay = refreshCurrentDay({ renderNow: false });
       route.run(input);
+      if (changedDay) render();
       return;
     }
   }
 }
 
 const changeRoutes = [
+  { selector: "[data-setting-control]", run: handleSettingControlInput },
   {
     selector: "[data-activity-type]",
     run: (input) => {
@@ -203,7 +269,9 @@ function handleAppChange(event) {
   if (!(input instanceof Element)) return;
   for (const route of changeRoutes) {
     if (input.matches(route.selector)) {
+      const changedDay = refreshCurrentDay({ renderNow: false });
       route.run(input);
+      if (changedDay) render();
       return;
     }
   }
@@ -212,8 +280,10 @@ function handleAppChange(event) {
 function handleAppToggle(event) {
   const details = event.target;
   if (!(details instanceof HTMLDetailsElement) || !details.matches(".advanced-fields")) return;
+  const changedDay = refreshCurrentDay({ renderNow: false });
   state.mealDraft.advancedOpen = details.open;
   saveStoredState();
+  if (changedDay) render();
 }
 
 const clickRoutes = [
@@ -241,7 +311,7 @@ const clickRoutes = [
   { selector: "[data-complete-workout]", run: completeWorkoutFromCard },
   { selector: "[data-scroll-body-form]", run: focusBodyFormInput },
   { selector: "[data-logout]", run: () => void logout() },
-  { selector: "[data-sync-now]", run: () => syncStateNow({ silent: false }) },
+  { selector: "[data-sync-now]", run: () => void retryConnection() },
   { selector: "[data-export-data]", run: exportUserData },
   { selector: "[data-clear-data]", run: openClearConfirm },
   { selector: "[data-delete-account]", run: openDeleteAccountConfirm },
@@ -302,7 +372,9 @@ function handleAppClick(event) {
     const control = target.closest(route.selector);
     if (!control) continue;
     if (route.prevent) event.preventDefault();
+    const changedDay = refreshCurrentDay({ renderNow: false });
     route.run(control, event);
+    if (changedDay) render();
     return;
   }
 }
@@ -385,14 +457,27 @@ function registerServiceWorker() {
 }
 
 function bindConnectivityRetry() {
+  scheduleDayBoundary();
   window.addEventListener("online", () => {
+    if (runtime.authSessionStatus === "offline-unverified" || runtime.offlineSyncReadRequired) {
+      void retryConnection();
+      return;
+    }
     if (state.authRequired && state.authServiceStatus !== "ready") void checkAuthReadiness({ force: true });
     if (state.syncPending || state.backendStatus === "local" || state.backendStatus === "offline") {
-      syncStateNow({ silent: false });
+      void retryConnection();
     }
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushPendingInputSave();
+    if (document.visibilityState === "visible") {
+      refreshCurrentDay({ renderNow: false });
+      scheduleDayBoundary();
+      if (!state.authRequired) render();
+      if ((runtime.authSessionStatus === "offline-unverified" || runtime.offlineSyncReadRequired) && navigator.onLine !== false) {
+        void retryConnection({ silent: true });
+      }
+    }
     if (document.visibilityState === "visible" && (state.syncPending || state.backendStatus === "local")) {
       scheduleSyncRetry({ silent: true, delay: 0 });
     }
@@ -421,10 +506,12 @@ async function initApp() {
   state.authServiceMessage = "正在检查认证服务…";
   state.authServiceCode = "";
   render();
-  await refreshSession();
+  const session = await refreshSession({ detailed: true });
+  if (session.reason === "stale-session") return;
   state.appLoading = false;
   state.backendStatus = runtime.accessToken ? "connecting" : "idle";
   if (runtime.accessToken) {
+    runtime.offlineSyncReadRequired = true;
     resetAppData({ blank: true });
     loadStoredState();
     state.authRequired = false;
@@ -433,12 +520,18 @@ async function initApp() {
     state.authServiceStatus = "ready";
     state.authServiceMessage = "认证会话有效。";
     state.authServiceCode = "AUTH_SESSION_READY";
+  } else if (session.status === "offline-unverified" && loadTrustedOfflineState()) {
+    state.activeTab = requestedSettingsRoute ? "profile" : tabFromLocation("home");
+    state.authEmail = readStorageValue(AUTH_EMAIL_KEY);
+    state.settingsOpen = requestedSettingsRoute && state.setupCompleted;
   }
   render();
-  if (!runtime.accessToken) await checkAuthReadiness();
+  if (state.authRequired) await checkAuthReadiness();
   if (hasBlockingOverlay()) requestAnimationFrame(focusSettingsPanel);
-  const loadedFromServer = await loadServerState();
+  const loadedFromServer = runtime.accessToken ? await loadServerState() : false;
   if (loadedFromServer) {
+    runtime.offlineSyncReadRequired = false;
+    if (state.syncPending) await syncStateNow();
     state.activeTab = requestedSettingsRoute ? "profile" : tabFromLocation("home");
     state.settingsOpen = requestedSettingsRoute && state.setupCompleted;
     state.clearConfirmOpen = false;

@@ -174,11 +174,7 @@ export async function submitEmailAuth() {
 
 export async function logout() {
   return runExclusiveAction("logout", async () => {
-    try {
-      await fetch(API_AUTH_LOGOUT_URL, { method: "POST", credentials: "same-origin", headers: authHeaders() });
-    } catch {
-      // Local logout should still complete if the network is unavailable.
-    }
+    const logoutHeaders = authHeaders();
     const aiController = runtime.aiNutritionController;
     runtime.aiNutritionSequence += 1;
     runtime.aiNutritionController = null;
@@ -205,6 +201,11 @@ export async function logout() {
     setBackendStatus("idle");
     render();
     void checkAuthReadiness();
+    try {
+      await fetch(API_AUTH_LOGOUT_URL, { method: "POST", credentials: "same-origin", headers: logoutHeaders });
+    } catch {
+      // Trust and local visibility are revoked before waiting on the network.
+    }
     return true;
   });
 }
@@ -213,11 +214,21 @@ export async function deleteAccount() {
   return runExclusiveAction("deleteAccount", async () => {
     try {
       if (!runtime.accessToken) throw new Error("请先登录");
+      const deletingUserId = runtime.authUserId;
+      const deletingProvider = runtime.authProvider;
+      const deletingGeneration = runtime.authSessionGeneration;
+      const accountChanged = () =>
+        runtime.authUserId !== deletingUserId ||
+        runtime.authProvider !== deletingProvider ||
+        runtime.authSessionGeneration !== deletingGeneration;
       let response = await fetch(API_AUTH_ACCOUNT_URL, { method: "DELETE", headers: authHeaders() });
+      if (accountChanged()) throw new Error("账号已切换，请重新确认要删除的账号");
       if (response.status === 401 && (await refreshSession())) {
+        if (accountChanged()) throw new Error("账号已切换，请重新确认要删除的账号");
         response = await fetch(API_AUTH_ACCOUNT_URL, { method: "DELETE", headers: authHeaders() });
       }
       const data = await response.json().catch(() => ({}));
+      if (accountChanged()) throw new Error("账号已切换，请重新确认要删除的账号");
       if (!response.ok) throw new Error(data.error || "账号删除失败，请稍后重试");
       if (runtime.authUserId) removeStorageValue(userStorageKey());
       const aiController = runtime.aiNutritionController;

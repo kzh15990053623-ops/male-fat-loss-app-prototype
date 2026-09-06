@@ -1,5 +1,5 @@
 import { state } from "../app-state.js";
-import { icon, escapeHtml, avg } from "../app-utils.js";
+import { icon, escapeHtml, avg, dateLabel } from "../app-utils.js";
 import { backendStatusText } from "../app-logic.js";
 
 export function loadingSpinner() {
@@ -184,8 +184,42 @@ export function renderWorkout(workout) {
   `;
 }
 
-export function barCard(title, values, unit) {
-  const safeValues = values.filter((value) => Number.isFinite(value));
+function normalizeChartSeries(series) {
+  return series
+    .map((item, index) => {
+      const entry = typeof item === "number" ? { date: `记录 ${index + 1}`, value: item } : item;
+      if (!entry || !Number.isFinite(entry.value)) return null;
+      const date = String(entry.date || entry.label || `记录 ${index + 1}`);
+      return { date, readableDate: dateLabel(date), value: Number(entry.value) };
+    })
+    .filter(Boolean);
+}
+
+export function chartDataDetails(title, series, unit) {
+  const safeSeries = normalizeChartSeries(series);
+  if (!safeSeries.length) return "";
+  return `
+    <details class="chart-data-details">
+      <summary aria-label="${escapeHtml(`${title}：查看每日数据`)}">查看每日数据</summary>
+      <dl aria-label="${escapeHtml(`${title}逐日数据`)}">
+        ${safeSeries
+          .map(
+            (item) => `
+              <div>
+                <dt>${escapeHtml(item.readableDate)}</dt>
+                <dd>${escapeHtml(item.value)}${unit ? ` ${escapeHtml(unit)}` : ""}</dd>
+              </div>
+            `,
+          )
+          .join("")}
+      </dl>
+    </details>
+  `;
+}
+
+export function barCard(title, series, unit) {
+  const safeSeries = normalizeChartSeries(series);
+  const safeValues = safeSeries.map((item) => item.value);
   const maxValue = Math.max(1, ...safeValues.map((value) => Math.abs(value)));
   return `
     <section class="chart-card">
@@ -193,9 +227,10 @@ export function barCard(title, values, unit) {
         <h2>${title}</h2>
         <span>${safeValues.length ? Math.round(avg(safeValues)) : "--"} ${unit}</span>
       </div>
-      <div class="mini-bars">
-        ${safeValues.map((value) => `<span class="${escapeHtml(value < 0 ? "negative" : "")}" data-height="${escapeHtml(Math.max(10, (Math.abs(value) / maxValue) * 100))}" title="${escapeHtml(value)} ${escapeHtml(unit)}"></span>`).join("")}
+      <div class="mini-bars" aria-hidden="true">
+        ${safeSeries.map((item) => `<span class="${escapeHtml(item.value < 0 ? "negative" : "")}" data-height="${escapeHtml(Math.max(10, (Math.abs(item.value) / maxValue) * 100))}" title="${escapeHtml(`${item.readableDate}，${item.value} ${unit}`)}"></span>`).join("")}
       </div>
+      ${chartDataDetails(title, safeSeries, unit)}
     </section>
   `;
 }

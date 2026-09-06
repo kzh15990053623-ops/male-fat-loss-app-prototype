@@ -177,6 +177,31 @@ function hydrateTodayFromRecords() {
   applyDailyRecord(state.dailyRecords[date] || createBlankDailyRecord(date));
 }
 
+// Run before a user action, and again before a delayed save. The live daily
+// fields still belong to currentDate until this boundary has been crossed.
+function rolloverToTodayIfNeeded(now = new Date().toISOString()) {
+  const date = todayKey();
+  const previousDate = state.currentDate;
+  if (!previousDate || previousDate === date) return false;
+  if (state.clearedAt) {
+    hydrateTodayFromRecords();
+    return true;
+  }
+  state.dailyRecords = isPlainRecord(state.dailyRecords) ? state.dailyRecords : {};
+  const previous = state.dailyRecords[previousDate];
+  const candidate = currentDailyRecord(previousDate, previous?.updatedAt || "");
+  const content = JSON.stringify(dailyRecordContent(candidate));
+  if (previous || content !== JSON.stringify(dailyRecordContent(createBlankDailyRecord(previousDate)))) {
+    state.dailyRecords[previousDate] =
+      content === JSON.stringify(dailyRecordContent(previous))
+        ? candidate
+        : { ...candidate, updatedAt: typeof now === "string" && timestampMs(now) ? now : new Date().toISOString() };
+  }
+  state.dailyRecords = pruneDailyRecords(state.dailyRecords);
+  hydrateTodayFromRecords();
+  return true;
+}
+
 function persistedStateFrom(rawState) {
   if (!isPlainRecord(rawState)) return {};
   const {
@@ -352,6 +377,7 @@ function capturePersistedDataFingerprint() {
 }
 
 function prepareLocalMutation(now = new Date().toISOString()) {
+  rolloverToTodayIfNeeded(now);
   const changedAt = typeof now === "string" && timestampMs(now) ? now : new Date().toISOString();
   const fingerprint = persistedDataFingerprint();
   if (runtime.lastPersistedDataFingerprint && fingerprint === runtime.lastPersistedDataFingerprint) {
@@ -639,6 +665,7 @@ export {
   currentDailyRecord,
   updateTodayRecord,
   hydrateTodayFromRecords,
+  rolloverToTodayIfNeeded,
   persistedStateFrom,
   migratePayload,
   syncBaseSnapshot,
