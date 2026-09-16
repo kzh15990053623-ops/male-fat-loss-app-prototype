@@ -404,17 +404,17 @@ async function checkFrontendSourceGuards() {
   assert.match(styles, /base\.css/);
   assert.match(styles, /components\.css/);
   assert.match(styles, /pages\.css/);
-  assert.match(tokens, /--ink: #102a3a/i);
-  assert.match(tokens, /--green: #0b715b/i);
-  assert.match(tokens, /--signal: #16a77d/i);
-  assert.match(tokens, /--paper: #f2f0e9/i);
+  assert.match(tokens, /--ink: #22352f/i);
+  assert.match(tokens, /--green: #246652/i);
+  assert.match(tokens, /--signal: #367e66/i);
+  assert.match(tokens, /--paper: #f7f6f2/i);
   assert.match(tokens, /--orange: #d86b24/i);
-  assert.match(tokens, /--radius-control: 12px/);
-  assert.match(tokens, /--radius-card: 20px/);
-  assert.match(tokens, /--radius-hero: 28px/);
+  assert.match(tokens, /--radius-control: 10px/);
+  assert.match(tokens, /--radius-card: 16px/);
+  assert.match(tokens, /--radius-hero: 20px/);
   assert.match(tokens, /@font-face/);
   assert.match(tokens, /data:font\/woff2;base64/);
-  assert.match(tokens, /font-family: "Barlow Condensed"/);
+  assert.match(tokens, /font-family: "Barlow"/);
   assert.match(fontLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
   assert.match(layeredStyles, /prefers-reduced-motion: reduce/);
   assert.doesNotMatch(layeredStyles, /transition:\s*all/);
@@ -502,7 +502,8 @@ async function checkFrontendModuleRuntime() {
   assert.match(render.renderDataLab(), /真实趋势正在建立/);
   assert.match(render.renderTrainingLab(), /燃脂快练/);
   assert.match(render.renderHome(), /现在记录/);
-  assert.match(render.renderHome(), /体重 \/ 腰围/);
+  assert.match(render.renderHome(), /data-weight-input/);
+  assert.match(render.renderHome(), /data-waist-input/);
 
   meals[1].calories = 620;
   meals[1].status = "已记录";
