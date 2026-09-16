@@ -1,6 +1,34 @@
 import { test, expect } from "@playwright/test";
 import { openFreshApp, seedApp, stateSnapshot } from "../helpers/app-fixture.mjs";
 
+test("首页记录入口在首屏可达，身体表单仍能保存并更新概览", async ({ page }) => {
+  await openFreshApp(page);
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 740 });
+    for (const variant of ["empty", "full"]) {
+      await seedApp(page, { variant, tab: "home" });
+      const navigation = await page.locator(".bottom-nav").boundingBox();
+      for (const selector of [
+        '.focus-item[data-coach-action="diet"]',
+        '.focus-item[data-coach-action="training"]',
+        '.focus-item[data-habit-step="water"]',
+      ]) {
+        const entry = await page.locator(selector).boundingBox();
+        expect(entry, `${width}px ${variant} ${selector}`).not.toBeNull();
+        expect(entry.y).toBeGreaterThanOrEqual(0);
+        expect(entry.y + entry.height).toBeLessThanOrEqual(navigation.y);
+      }
+    }
+  }
+  await page.locator("[data-weight-input]").fill("85.8");
+  await page.locator("[data-waist-input]").fill("94.8");
+  await page.locator("[data-save-body]").click();
+  await expect(page.locator('[data-count-key="home-weight"]')).toHaveText("85.8");
+  expect((await stateSnapshot(page)).state).toMatchObject({ weight: 85.8, waist: 94.8 });
+  await page.locator('.focus-item[data-coach-action="diet"]').click();
+  await expect(page.locator("[data-meal-form]")).toBeVisible();
+});
+
 test("趋势图支持鼠标、触摸点击与键盘等价选点", async ({ page }) => {
   await openFreshApp(page);
   await seedApp(page, { variant: "full", tab: "data" });

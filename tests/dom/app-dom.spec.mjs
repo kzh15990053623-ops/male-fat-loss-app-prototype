@@ -174,7 +174,7 @@ test("首页本周行动进度从周一开始，忽略仅有身体基线的零�
     return weeklyCompletionSummary("2026-08-09");
   });
   expect(emptySummary).toMatchObject({ percent: null, days: 0, weekStart: "2026-08-03", through: "2026-08-09" });
-  await expect(page.locator(".progress-ring")).toHaveAttribute("aria-label", "本周还没有行动记录");
+  await expect(page.locator(".weekly-progress")).toHaveAttribute("aria-label", "本周还没有行动记录");
   await expect(page.locator(".lab-hero")).toContainText("从第一笔开始");
   await expect(page.locator(".lab-hero")).not.toContainText(/0%|目标\s*78kg/);
 
@@ -205,8 +205,8 @@ test("首页本周行动进度从周一开始，忽略仅有身体基线的零�
     return result;
   });
   expect(summary).toMatchObject({ percent: 50, days: 2, completed: 5, total: 10, weekStart: "2026-08-03", through: "2026-08-09" });
-  await expect(page.locator(".progress-ring")).toHaveAttribute("aria-label", "本周行动完成度 50%");
-  await expect(page.locator(".progress-ring")).toContainText("50%");
+  await expect(page.locator(".weekly-progress")).toHaveAttribute("aria-label", "本周行动完成度 50%");
+  await expect(page.locator(".weekly-progress")).toContainText("50%");
 });
 
 test("品牌语言与空态主行动完成迁移", async ({ page }) => {

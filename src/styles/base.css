@@ -7,7 +7,7 @@
 html {
   min-width: 320px;
   min-height: 100%;
-  background: #dce1dd;
+  background: #e9ebe6;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   scroll-behavior: smooth;
@@ -19,13 +19,10 @@ body {
   min-height: 100svh;
   margin: 0;
   color: var(--ink);
-  background:
-    linear-gradient(rgba(16, 42, 58, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(16, 42, 58, 0.035) 1px, transparent 1px),
-    #dce1dd;
-  background-size: 32px 32px;
+  background: #e9ebe6;
   font-family: var(--font-cjk);
-  font-size: 15px;
-  line-height: 1.55;
+  font-size: var(--font-body);
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -78,19 +75,18 @@ figure {
 h1,
 h2,
 h3 {
-  line-height: 1.16;
-  letter-spacing: -0.025em;
+  line-height: 1.4;
+  letter-spacing: 0;
+  font-weight: var(--weight-semibold);
   text-wrap: balance;
 }
 
 h1 {
-  font-size: clamp(1.75rem, 8vw, 2.25rem);
-  font-weight: 750;
+  font-size: var(--font-title);
 }
 
 h2 {
-  font-size: 1.25rem;
-  font-weight: 720;
+  font-size: var(--font-section);
 }
 
 h3 {
@@ -103,9 +99,8 @@ strong,
 .hero-budget strong,
 .data-command-strip strong,
 .nutrition-strip strong,
-.progress-ring span,
-.training-orbit span,
-.review-score span {
+.training-orbit span {
+  font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums lining-nums;
 }
 
@@ -131,6 +126,7 @@ textarea {
   outline: none;
   background: var(--paper-2);
   padding: 11px 12px;
+  font-size: 1rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -177,7 +173,7 @@ details > summary::-webkit-details-marker {
   margin: 0 auto;
   overflow-x: clip;
   background: var(--paper);
-  box-shadow: var(--shadow-float);
+  box-shadow: 0 0 0 1px var(--line);
 }
 
 .app-surface {
@@ -222,16 +218,15 @@ details > summary::-webkit-details-marker {
 
 .eyebrow {
   color: var(--green);
-  font-family: var(--font-data);
+  font-family: var(--font-cjk);
   font-size: var(--font-caption);
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+  letter-spacing: 0;
 }
 
 .negative {
-  color: var(--orange) !important;
+  color: var(--orange-ink) !important;
 }
 
 .field-label {
@@ -239,8 +234,8 @@ details > summary::-webkit-details-marker {
   min-width: 0;
   gap: 7px;
   color: var(--ink-3);
-  font-size: 0.78rem;
-  font-weight: 650;
+  font-size: var(--font-small);
+  font-weight: var(--weight-medium);
 }
 
 .field-label.has-error input,

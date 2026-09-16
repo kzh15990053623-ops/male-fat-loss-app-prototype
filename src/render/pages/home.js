@@ -4,7 +4,6 @@ import {
   totalIntake,
   totalBurned,
   remainingCalories,
-  waistProgress,
   weightSeries,
   weeklyCompletionSummary,
   todayTasks,
@@ -17,7 +16,6 @@ import { pageHeader, lineChart } from "../shared.js";
 export function renderHome() {
   const weeklyProgress = weeklyCompletionSummary();
   const streak = computeStreak(state.dailyRecords);
-  const waistRate = waistProgress();
   const remaining = remainingCalories();
   const allTasks = todayTasks();
   const focusTasks = ["饮食记录", "训练", "喝水"].map((label) => allTasks.find((task) => task.label === label)).filter(Boolean);
@@ -25,43 +23,34 @@ export function renderHome() {
     ${pageHeader("今天", renderStreakSubtitle(streak), `<button class="icon-button" data-app-action="goal" aria-label="目标与设置">${icon("settings")}</button>`)}
 
     <section class="hero-panel lab-hero">
-      <div class="hero-kicker"><span>本周行动</span><span>${weeklyProgress.percent === null ? "从第一笔开始" : `${weeklyProgress.percent}% 完成`}</span></div>
       <div class="hero-measure">
         <div>
           <span class="metric-label">当前体重</span>
           <strong><span data-count-up data-count-key="home-weight" data-count-value="${escapeHtml(state.weight)}" data-count-decimals="1">${state.weight}</span><small>kg</small></strong>
-          <p>腰围 ${state.waist}cm · ${weeklyProgress.days ? `本周 ${weeklyProgress.days} 个行动记录日` : "今天先完成一个小行动"}</p>
         </div>
-        <div class="progress-ring ${escapeHtml(weeklyProgress.percent === null ? "is-empty" : "")}" data-progress="${escapeHtml(weeklyProgress.percent ?? 0)}" aria-label="${escapeHtml(weeklyProgress.percent === null ? "本周还没有行动记录" : `本周行动完成度 ${weeklyProgress.percent}%`)}">
-          <span>${weeklyProgress.percent === null ? "起步" : `<span data-count-up data-count-key="weekly-progress" data-count-value="${escapeHtml(weeklyProgress.percent)}" data-count-decimals="0">${weeklyProgress.percent}</span>`}${weeklyProgress.percent === null ? "" : "<small>%</small>"}</span>
+        <div class="hero-waist">
+          <span class="metric-label">腰围</span>
+          <strong>${state.waist}<small>cm</small></strong>
         </div>
       </div>
-    </section>
-
-    <section class="home-budget-strip" aria-label="今日热量概览">
+      <div class="weekly-progress" data-progress="${escapeHtml(weeklyProgress.percent ?? 0)}" aria-label="${escapeHtml(weeklyProgress.percent === null ? "本周还没有行动记录" : `本周行动完成度 ${weeklyProgress.percent}%`)}">
+        <span>本周行动</span>
+        <strong>${weeklyProgress.percent === null ? "从第一笔开始" : `<span data-count-up data-count-key="weekly-progress" data-count-value="${escapeHtml(weeklyProgress.percent)}" data-count-decimals="0">${weeklyProgress.percent}</span>%`}</strong>
+        <span class="weekly-progress-track" aria-hidden="true"><i></i></span>
+      </div>
+      <div class="home-budget-strip" aria-label="今日热量概览">
         <div><span>剩余可摄入</span><strong class="${escapeHtml(remaining < 0 ? "negative" : "")}">${remaining}<small>kcal</small></strong></div>
         <div><span>今日摄入</span><strong>${totalIntake()}<small>kcal</small></strong></div>
         <div><span>运动消耗</span><strong>${totalBurned()}<small>kcal</small></strong></div>
+      </div>
     </section>
 
-    <section class="focus-board">
+    <section class="quick-capture-panel focus-board" aria-label="快速记录">
       <div class="section-title">
-        <div><h2>今日三件事</h2></div>
-        <span>${focusTasks.filter((task) => task.done).length} / ${focusTasks.length}</span>
+        <div><h2>现在记录</h2></div>
+        <span>今日三件事 · ${focusTasks.filter((task) => task.done).length} / ${focusTasks.length}</span>
       </div>
       <div class="focus-list">${focusTasks.map(renderFocusTask).join("")}</div>
-    </section>
-
-    <section class="quick-capture-panel" aria-label="快速记录">
-      <div class="quick-capture-head">
-        <div><h2>现在记录</h2></div>
-        <span>两步内完成</span>
-      </div>
-      <div class="capture-grid">
-        <button type="button" data-scroll-body-form>${icon("edit")}<span>身体</span><small>体重 / 腰围</small></button>
-        <button type="button" data-coach-action="diet">${icon("fork")}<span>饮食</span><small>文字识别</small></button>
-        <button type="button" data-coach-action="training">${icon("dumbbell")}<span>训练</span><small>运动消耗</small></button>
-      </div>
       <form class="quick-weight-card" id="body-record-form" data-body-form>
         <label class="field-label">
           <span>体重 (kg)</span>
@@ -75,11 +64,9 @@ export function renderHome() {
       </form>
     </section>
 
-    ${renderRhythmCards(waistRate)}
-    ${renderSmartCoach()}
-    ${renderHomeWeightTrend()}
     ${renderHabitControls()}
-    ${renderDailyReview()}
+    ${renderHomeWeightTrend()}
+    ${renderSmartCoach()}
   `;
 }
 
@@ -97,42 +84,10 @@ function renderFocusTask(task) {
   const justCompleted = runtime.completionFeedback?.tasks?.includes(task.label);
   return `
     <button class="focus-item ${escapeHtml(task.done ? "done" : "")} ${escapeHtml(justCompleted ? "just-completed" : "")}" type="button" ${action === "water" ? 'data-habit-step="water" data-step-direction="1"' : `data-coach-action="${escapeHtml(action)}"`}>
-      <span class="focus-index">0${["饮食记录", "训练", "喝水"].indexOf(task.label) + 1}</span>
+      <span class="focus-symbol" aria-hidden="true">${icon(action === "diet" ? "fork" : action === "training" ? "dumbbell" : "water")}</span>
       <span class="focus-copy"><strong>${escapeHtml(task.label)}</strong><small>${escapeHtml(task.value)}</small></span>
       <span class="focus-status" aria-label="${escapeHtml(task.done ? "已完成" : "待完成")}">${task.done ? icon("check") : icon("arrow")}</span>
     </button>
-  `;
-}
-
-function renderRhythmCards(waistRate) {
-  const waterLiters = (state.waterMl / 1000).toFixed(1);
-  return `
-    <section class="rhythm-grid" aria-label="今日健康节奏">
-      <article class="rhythm-card sleep">
-        <span>${icon("moon")}</span>
-        <p>睡眠</p>
-        <strong>${state.sleep}<small>h</small></strong>
-        <em>${state.sleep ? (state.sleep >= 7 ? "达到恢复线" : "仍需补充休息") : "尚未记录"}</em>
-      </article>
-      <article class="rhythm-card water">
-        <span>${icon("water")}</span>
-        <p>饮水</p>
-        <strong>${waterLiters}<small>L</small></strong>
-        <em>目标 ${(state.waterTarget / 1000).toFixed(1)}L</em>
-      </article>
-      <article class="rhythm-card steps">
-        <span>${icon("steps")}</span>
-        <p>步数</p>
-        <strong>${state.steps.toLocaleString("zh-CN")}</strong>
-        <em>目标 ${state.stepsTarget} 步</em>
-      </article>
-      <article class="rhythm-card status">
-        <span>${icon("heart")}</span>
-        <p>腰围</p>
-        <strong>${waistRate}<small>%</small></strong>
-        <em>${waistRate ? "目标推进中" : "等待后续记录"}</em>
-      </article>
-    </section>
   `;
 }
 
@@ -172,26 +127,23 @@ function renderSmartCoach() {
   const review = reviewSummary();
   return `
     <section class="coach-card">
-      <div class="coach-head">
-        <span class="coach-avatar">稳</span>
-        <div>
-          <p class="eyebrow">教练洞察</p>
-          <h2>${review.title}</h2>
-        </div>
-      </div>
+      <div class="section-title"><h2>教练洞察</h2></div>
       <div class="coach-plan-list">
         ${plan.actions
-          .slice(0, 2)
+          .slice(0, 1)
           .map((item) => `<p>${item}</p>`)
           .join("")}
       </div>
-      <div class="coach-risk">
-        ${plan.risks.map((item) => `<span>${item}</span>`).join("")}
-      </div>
-      <div class="coach-actions">
-        <button class="complete-button" type="button" data-coach-action="diet">${icon("edit")}记录今晚饮食</button>
-        <button class="outline-button" type="button" data-coach-action="training">${icon("dumbbell")}安排训练</button>
-      </div>
+      <details class="coach-details">
+        <summary>每日复盘 <span>${review.score} 分${icon("arrow")}</span></summary>
+        <h3>${review.title}</h3>
+        <p>${review.good.concat(review.todo).slice(0, 3).join(" · ")}</p>
+        ${plan.actions
+          .slice(1)
+          .map((item) => `<p>${item}</p>`)
+          .join("")}
+        <div class="coach-risk">${plan.risks.map((item) => `<p>${item}</p>`).join("")}</div>
+      </details>
     </section>
   `;
 }
@@ -229,21 +181,5 @@ function habitControl(key, label, value, percent, iconName, addLabel) {
         <button class="habit-add-button" data-habit-step="${escapeHtml(key)}" data-step-direction="1">${addLabel}</button>
       </div>
     </article>
-  `;
-}
-
-function renderDailyReview() {
-  const review = reviewSummary();
-  return `
-    <section class="daily-review-card">
-      <div class="review-score">
-        <span>${review.score}</span>
-      </div>
-      <div>
-        <p class="eyebrow">每日复盘</p>
-        <h2>${review.title}</h2>
-        <p>${review.good.concat(review.todo).slice(0, 3).join(" · ")}</p>
-      </div>
-    </section>
   `;
 }

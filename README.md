@@ -144,7 +144,7 @@ npm run supabase:db:push
 - `src/app-actions.js`：根节点单次事件委托和页面动作。
 - `src/styles/`：按 tokens、base、components、pages 分层的样式。
 
-登录、首次设置、五个主页面、设置页和 AI 复核态的可重复视觉基准位于 `tests/visual/__screenshots__/`；人工验收图位于 `output/playwright/`。DOM 测试固定覆盖 320×740、390×844、430×932，且逐页检查横向溢出、44px 触控目标、字段语义和非法数值。Barlow Condensed 数字字体已内嵌在设计令牌样式中，授权文本位于 `src/fonts/OFL.txt`。
+登录、首次设置、五个主页面、设置页和 AI 复核态的可重复视觉基准位于 `tests/visual/__screenshots__/`；人工验收图位于 `output/playwright/`。DOM 测试固定覆盖 320×740、390×844、430×932，且逐页检查横向溢出、44px 触控目标、字段语义和非法数值。Barlow 500/600 常规宽度数字字体已内嵌在设计令牌样式中，授权文本位于 `src/fonts/OFL.txt`。
 
 ## 配置真实 AI 营养服务
 
