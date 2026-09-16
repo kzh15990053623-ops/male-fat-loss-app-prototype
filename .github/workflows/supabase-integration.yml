@@ -1,0 +1,34 @@
+name: local-supabase-integration
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 19 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-supabase-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  database-isolation:
+    name: Local migrations / user isolation / conflicts / account deletion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Create this checkout's dedicated local Supabase stack
+        run: npm run supabase:test:start
+      - name: Check actual database policies and concurrent writes
+        run: npm run test:supabase
+      - name: Stop the dedicated local stack
+        if: always()
+        run: npm run supabase:test:stop

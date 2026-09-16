@@ -1,5 +1,6 @@
 import { state, navItems, runtime } from "./app-state.js";
 import { icon, escapeHtml } from "./app-utils.js";
+import { isOfflineAccessTrusted } from "./app-storage.js";
 import { loadingSpinner } from "./render/shared.js";
 import { renderHome } from "./render/pages/home.js";
 import { renderDietLab } from "./render/pages/diet.js";
@@ -91,20 +92,20 @@ function focusTargetSelector(element) {
   return dataAttribute ? `${tag}[${dataAttribute.name}="${CSS.escape(dataAttribute.value)}"]` : "";
 }
 
-function captureFocusState(surface, announcement) {
+function captureFocusState(surface, announcement = null) {
   const active = document.activeElement;
-  if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement)) return null;
+  if (!(active instanceof HTMLElement)) return null;
   if (!surface.contains(active)) return null;
-  if (!(announcement.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+  if (announcement && !(announcement.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
   const selector = focusTargetSelector(active);
   if (!selector) return null;
-  // number 等不支持选区的控件 selectionStart 为 null，只恢复焦点不恢复光标
-  const selectionStart = typeof active.selectionStart === "number" ? active.selectionStart : null;
+  // number、select、button 等不支持选区的控件只恢复焦点。
+  const selectionStart = "selectionStart" in active && typeof active.selectionStart === "number" ? active.selectionStart : null;
   return {
     selector,
     index: Array.from(surface.querySelectorAll(selector)).indexOf(active),
     selectionStart,
-    selectionEnd: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+    selectionEnd: "selectionEnd" in active && typeof active.selectionEnd === "number" ? active.selectionEnd : null,
   };
 }
 
@@ -114,9 +115,30 @@ function restoreFocusState(surface, focusState) {
   const next = candidates[focusState.index] || candidates[0];
   if (!(next instanceof HTMLElement)) return;
   next.focus({ preventScroll: true });
-  if (focusState.selectionStart !== null && typeof next.selectionStart === "number") {
+  if (focusState.selectionStart !== null && "selectionStart" in next && typeof next.selectionStart === "number") {
     next.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
   }
+}
+
+function captureSettingsPanelState(root) {
+  const selector = state.settingsOpen ? ".settings-sheet" : "[data-setup-form]";
+  const panel = root.querySelector(selector);
+  if (!(panel instanceof HTMLElement)) return null;
+  return {
+    selector,
+    scrollTop: panel.scrollTop,
+    focusState: captureFocusState(panel),
+  };
+}
+
+function restoreSettingsPanelState(root, panelState) {
+  if (!panelState) return;
+  const panel = root.querySelector(panelState.selector);
+  if (!(panel instanceof HTMLElement)) return;
+  panel.scrollTop = panelState.scrollTop;
+  restoreFocusState(panel, panelState.focusState);
+  // 某些浏览器聚焦控件后仍会微调滚动位置，最后再恢复一次。
+  panel.scrollTop = panelState.scrollTop;
 }
 
 // CSP style-src 不含 'unsafe-inline'：动态样式值不能走 HTML style 属性注入，
@@ -186,11 +208,12 @@ function numberField({ key, label, value, min, max, step = 1, placeholder = "" }
   const errorId = `field-error-${key}`;
   const draftValue =
     state.settingsDraft && Object.prototype.hasOwnProperty.call(state.settingsDraft, key) ? state.settingsDraft[key] : value;
-  const normalizedValue = Number(draftValue) > 0 ? draftValue : "";
+  const hasDraft = state.settingsDraft && Object.prototype.hasOwnProperty.call(state.settingsDraft, key);
+  const normalizedValue = hasDraft ? (draftValue ?? "") : Number(draftValue) > 0 ? draftValue : "";
   return `
     <label class="field-label ${escapeHtml(error ? "has-error" : "")}" data-field-name="${escapeHtml(key)}">
       <span>${label}</span>
-      <input data-setting-field="${escapeHtml(key)}" name="${escapeHtml(key)}" type="number" inputmode="decimal" autocomplete="off" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(normalizedValue)}" placeholder="${escapeHtml(placeholder)}" ${error ? `aria-invalid="true" aria-describedby="${escapeHtml(errorId)}"` : ""} />
+      <input data-setting-field="${escapeHtml(key)}" data-setting-control name="${escapeHtml(key)}" type="number" inputmode="decimal" autocomplete="off" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(normalizedValue)}" placeholder="${escapeHtml(placeholder)}" ${error ? `aria-invalid="true" aria-describedby="${escapeHtml(errorId)}"` : ""} />
       ${error ? `<small class="field-error" id="${escapeHtml(errorId)}" role="alert">${escapeHtml(error)}</small>` : ""}
     </label>
   `;
@@ -372,6 +395,7 @@ function renderSettingsPanel() {
   const aiAssist = draft.aiAssist ?? state.preferences.aiAssist;
   const reminderTime = draft.reminderTime ?? state.preferences.reminderTime ?? "21:30";
   const pushEnabled = draft.pushEnabled ?? state.preferences.pushEnabled;
+  const trustedOfflineAccess = draft.trustedOfflineAccess ?? isOfflineAccessTrusted();
   const saveBusy = runtime.pendingActions.has("saveSettings");
   return `
     <section class="settings-scrim" ${saveBusy ? "" : "data-close-settings"}></section>
@@ -392,29 +416,47 @@ function renderSettingsPanel() {
           ${metricNumberFields(["calories"])}
           <label class="field-label">
             <span>单位</span>
-            <select data-setting-unit name="unit" autocomplete="off">
+            <select data-setting-unit data-setting-control name="unit" autocomplete="off">
               <option value="metric" ${unit === "metric" ? "selected" : ""}>公制 kg/cm</option>
             </select>
           </label>
           <label class="field-label">
             <span>AI 辅助</span>
-            <select data-setting-ai name="aiAssist" autocomplete="off">
+            <select data-setting-ai data-setting-control name="aiAssist" autocomplete="off">
               <option value="on" ${aiAssist ? "selected" : ""}>开启</option>
               <option value="off" ${!aiAssist ? "selected" : ""}>关闭</option>
             </select>
           </label>
           <label class="field-label">
-            <span>晚间提醒</span>
-            <input data-setting-reminder name="reminderTime" type="time" autocomplete="off" value="${escapeHtml(reminderTime)}" />
+            <span>应用打开时提醒时间</span>
+            <input data-setting-reminder data-setting-control name="reminderTime" type="time" autocomplete="off" value="${escapeHtml(reminderTime)}" aria-describedby="settings-reminder-note" />
           </label>
           <label class="toggle-row">
-            <span>记录提醒</span>
+            <span>应用内记录提醒</span>
             <span class="toggle-switch">
-              <input data-setting-push name="pushEnabled" type="checkbox" role="switch" ${pushEnabled ? "checked" : ""} />
+              <input data-setting-push data-setting-control name="pushEnabled" type="checkbox" role="switch" aria-describedby="settings-reminder-note" ${pushEnabled ? "checked" : ""} />
               <span class="toggle-track" aria-hidden="true"></span>
             </span>
           </label>
+          <p class="settings-note" id="settings-reminder-note">仅在应用保持打开时按所选时间提醒。允许通知后还会显示系统通知；关闭或挂起应用后无法保证提醒。</p>
         </div>
+      </div>
+      <div class="settings-group">
+        <h3>隐私与离线</h3>
+        <label class="toggle-row">
+          <span>信任此设备离线查看</span>
+          <span class="toggle-switch">
+            <input data-setting-trusted-offline data-setting-control name="trustedOfflineAccess" type="checkbox" role="switch" aria-describedby="trusted-offline-note" ${trustedOfflineAccess ? "checked" : ""} />
+            <span class="toggle-track" aria-hidden="true"></span>
+          </span>
+        </label>
+        <p class="settings-note" id="trusted-offline-note">默认关闭。开启后，这台设备断网重开应用时可直接查看和继续记录当前账号的健康数据，不再要求登录。退出登录、删除账号或联网确认身份失效后会自动关闭。能使用此浏览器的人也能查看，请勿在共用设备开启。</p>
+      </div>
+      <div class="settings-group">
+        <h3>记录保留与导出</h3>
+        <p class="settings-note">体重和腰围各保留最近 90 条记录；每日饮食、训练等综合记录保留最近 180 个记录日。达到上限后会自动移除最早的记录。</p>
+        <p class="settings-note">如需长期保存，请定期导出备份。导出包含当前仍保留的数据，无法恢复已移除的旧记录。</p>
+        <button class="outline-button" type="button" data-export-data>${icon("download")}导出当前数据备份</button>
       </div>
       <div class="settings-actions">
         <button class="complete-button" type="submit" data-save-settings aria-busy="${escapeHtml(saveBusy)}" ${saveBusy ? "disabled" : ""}>${saveBusy ? loadingSpinner() : icon("check")}<span>${saveBusy ? "保存中…" : "保存设置"}</span></button>
@@ -479,6 +521,8 @@ export {
   appShell,
   shellSignature,
   patchCurrentPage,
+  captureSettingsPanelState,
+  restoreSettingsPanelState,
   renderCurrentPage,
   renderOnboardingScreen,
   renderLockScreen,

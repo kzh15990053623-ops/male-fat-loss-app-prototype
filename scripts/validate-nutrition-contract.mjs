@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { closeHttpServer, startFetchSafeHttpServer } from "./test-http-server.mjs";
 
 const received = [];
 let mode = "success";
@@ -35,14 +36,10 @@ const mock = createServer(async (request, response) => {
   );
 });
 
-await new Promise((resolve, reject) => {
-  mock.once("error", reject);
-  mock.listen(0, "127.0.0.1", resolve);
-});
+const started = await startFetchSafeHttpServer(() => mock);
 
 try {
-  const address = mock.address();
-  process.env.NUTRITION_AI_ENDPOINT = `http://127.0.0.1:${address.port}/nutrition`;
+  process.env.NUTRITION_AI_ENDPOINT = `${started.origin}/nutrition`;
   process.env.NUTRITION_AI_API_KEY = "test-key";
   process.env.NUTRITION_AI_MODEL = "mock-nutrition-model";
   process.env.NUTRITION_AI_PROTOCOL = "contract";
@@ -74,7 +71,7 @@ try {
     (error) => error.code === "EMPTY_FOOD_TEXT" && error.status === 400 && error.retryable === false && Boolean(error.requestId),
   );
 } finally {
-  await new Promise((resolve) => mock.close(resolve));
+  await closeHttpServer(mock);
 }
 
 console.log("Nutrition AI contract checks passed");

@@ -260,6 +260,8 @@ const LEGACY_REFRESH_TOKEN_KEY = "fat-loss-refresh-token";
 const AUTH_USER_KEY = "fat-loss-auth-user-id";
 const AUTH_EMAIL_KEY = "fat-loss-auth-email";
 const AUTH_PROVIDER_KEY = "fat-loss-auth-provider";
+const AUTH_VERIFIED_KEY = "fat-loss-auth-verified-v1";
+const OFFLINE_ACCESS_TRUST_KEY = "fat-loss-offline-access-v1";
 const API_STATE_URL = "/api/state";
 const API_NUTRITION_URL = "/api/ai/nutrition";
 const API_AUTH_LOGIN_URL = "/api/auth/login";
@@ -289,6 +291,11 @@ const runtime = {
   accessToken: "",
   authUserId: storedValue(AUTH_USER_KEY),
   authProvider: storedValue(AUTH_PROVIDER_KEY) === "local" ? "local" : "supabase",
+  authSessionStatus: "anonymous",
+  authSessionGeneration: 0,
+  offlineSessionActive: false,
+  offlineSyncReadRequired: false,
+  offlineSessionReason: "",
   settingsReturnAction: "settings",
   settingsReturnHash: "#tab-profile",
   pendingTabEnter: false,
@@ -334,6 +341,8 @@ export {
   AUTH_USER_KEY,
   AUTH_EMAIL_KEY,
   AUTH_PROVIDER_KEY,
+  AUTH_VERIFIED_KEY,
+  OFFLINE_ACCESS_TRUST_KEY,
   API_STATE_URL,
   API_NUTRITION_URL,
   API_AUTH_LOGIN_URL,

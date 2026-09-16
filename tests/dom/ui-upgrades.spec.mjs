@@ -242,10 +242,13 @@ test("清空与退出的重复触发均只发出一次请求", async ({ page }) 
     click();
     click();
   });
-  const logoutButton = page.locator("[data-logout]");
-  await expect(logoutButton).toBeDisabled();
-  await expect(logoutButton).toHaveAttribute("aria-busy", "true");
-  await expect(logoutButton).toContainText("退出中…");
+  // Local health data is hidden immediately, without waiting for revocation.
+  await expect(page.locator("[data-auth-form]")).toBeVisible();
+  await expect(page.locator(".bottom-nav")).toHaveCount(0);
+  await page.evaluate(async () => {
+    const { logout } = await import("/src/actions/auth.js");
+    void logout();
+  });
   expect(await page.evaluate(() => window.__logoutCalls)).toBe(1);
   await page.evaluate(() => window.__resolveLogout?.());
   await expect(page.locator("[data-auth-form]")).toBeVisible();

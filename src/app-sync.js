@@ -16,7 +16,16 @@ import {
   prepareLocalMutation,
   mergePayloads,
 } from "./app-data.js";
-import { userStorageKey, safeStorageRemove, readStoredPayload, writeStoredPayload, storeSession, clearSession } from "./app-storage.js";
+import {
+  userStorageKey,
+  safeStorageRemove,
+  readStoredPayload,
+  readOfflineStoredPayload,
+  writeStoredPayload,
+  storeSession,
+  clearSession,
+  isOfflineAccessTrusted,
+} from "./app-storage.js";
 
 let syncFeedbackHandler = () => {};
 
@@ -120,8 +129,8 @@ function adoptRemoteClear(rawData) {
   return { revision, updatedAt, clearedAt };
 }
 
-function loadStoredState() {
-  const stored = readStoredPayload();
+function loadStoredState(rawStored) {
+  const stored = rawStored === undefined ? readStoredPayload() : rawStored;
   if (!stored) return null;
   runtime.stateRevision = payloadRevisionOf(stored);
   runtime.localUpdatedAt = stored.localUpdatedAt || "";
@@ -132,15 +141,64 @@ function loadStoredState() {
   return stored;
 }
 
-async function loadServerState({ retried = false } = {}) {
+function isTrustedOfflineSession() {
+  return (
+    runtime.authSessionStatus === "offline-unverified" &&
+    runtime.offlineSessionActive === true &&
+    !runtime.accessToken &&
+    isOfflineAccessTrusted()
+  );
+}
+
+function loadTrustedOfflineState() {
+  runtime.offlineSessionActive = false;
+  if (runtime.authSessionStatus !== "offline-unverified" || runtime.accessToken || !isOfflineAccessTrusted()) return null;
+  const stored = readOfflineStoredPayload();
+  if (!stored) return null;
+  const loaded = loadStoredState(stored);
+  if (!loaded) return null;
+  runtime.offlineSessionActive = true;
+  runtime.offlineSyncReadRequired = true;
+  state.syncPending = Number.isInteger(stored.dirtyBaseRevision) && stored.dirtyBaseRevision >= 0;
+  state.authRequired = false;
+  state.backendStatus = "offline";
+  state.syncErrorKind = runtime.offlineSessionReason === "network" ? "network" : "server";
+  state.syncError =
+    runtime.offlineSessionReason === "network"
+      ? "当前离线，正在显示这台设备上的缓存；联网并验证账号后再同步"
+      : "认证服务暂不可用，正在显示这台设备上的缓存；恢复后验证账号再同步";
+  return loaded;
+}
+
+async function loadServerState(options = {}) {
+  const generation = runtime.authSessionGeneration;
+  const loaded = await loadServerStateRound(options);
+  if (loaded && generation === runtime.authSessionGeneration) runtime.offlineSyncReadRequired = false;
+  return loaded;
+}
+
+async function loadServerStateRound({ retried = false } = {}) {
+  const userId = runtime.authUserId;
+  const generation = runtime.authSessionGeneration;
+  const sessionChanged = () => userId !== runtime.authUserId || generation !== runtime.authSessionGeneration;
   try {
     if (!runtime.accessToken) {
-      state.authRequired = true;
+      state.authRequired = !isTrustedOfflineSession();
       return false;
     }
     const response = await fetch(API_STATE_URL, { cache: "no-store", headers: authHeaders() });
+    if (sessionChanged()) return false;
     if (response.status === 401) {
-      if (!retried && (await refreshSession())) return loadServerState({ retried: true });
+      if (!retried) {
+        const refresh = await refreshSession({ detailed: true });
+        if (refresh.status === "authenticated") return loadServerState({ retried: true });
+        if (refresh.status === "offline-unverified") {
+          state.syncErrorKind = refresh.reason === "network" ? "network" : "server";
+          state.syncError = refresh.reason === "network" ? "当前离线，联网后可重试" : "认证服务暂不可用，恢复后可重试";
+          setBackendStatus("offline");
+          return false;
+        }
+      }
       state.authRequired = true;
       clearSession();
       return false;
@@ -152,6 +210,10 @@ async function loadServerState({ retried = false } = {}) {
       return false;
     }
     const rawData = await response.json();
+    if (sessionChanged()) return false;
+    // Edits can arrive while the GET is in flight. Persist their draft before
+    // taking the local merge input; the reconnect gate prevents an early PUT.
+    flushPendingInputSave();
     const data = migratePayload(rawData) || rawData;
     runtime.stateRevision = payloadRevisionOf(rawData);
     const localPayload = readStoredPayload();
@@ -245,6 +307,7 @@ async function loadServerState({ retried = false } = {}) {
     }
     return true;
   } catch {
+    if (sessionChanged()) return false;
     state.syncErrorKind = navigator.onLine === false ? "network" : "server";
     state.syncError = navigator.onLine === false ? "当前离线，联网后可重试" : "暂时无法连接云端";
     setBackendStatus("offline");
@@ -256,22 +319,60 @@ function authHeaders(extra = {}) {
   return runtime.accessToken ? { ...extra, Authorization: `Bearer ${runtime.accessToken}` } : extra;
 }
 
-async function refreshSession() {
+function finishRefreshSession(outcome, detailed) {
+  runtime.authSessionStatus = outcome.status;
+  runtime.offlineSessionActive = false;
+  runtime.offlineSessionReason = outcome.status === "offline-unverified" ? outcome.reason : "";
+  if (outcome.status !== "authenticated") runtime.accessToken = "";
+  if (outcome.status === "offline-unverified") runtime.offlineSyncReadRequired = true;
+  return detailed ? outcome : outcome.status === "authenticated";
+}
+
+async function refreshSession({ detailed = false } = {}) {
+  const expectedUserId = runtime.authUserId;
+  const expectedProvider = runtime.authProvider;
+  const generation = runtime.authSessionGeneration;
+  const superseded = () =>
+    generation !== runtime.authSessionGeneration || expectedUserId !== runtime.authUserId || expectedProvider !== runtime.authProvider;
+  const staleOutcome = () => (detailed ? { status: "anonymous", httpStatus: null, retryable: false, reason: "stale-session" } : false);
+  let response;
   try {
-    const response = await fetch(API_AUTH_REFRESH_URL, {
+    response = await fetch(API_AUTH_REFRESH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({}),
     });
-    if (response.status === 204) return false;
-    const data = await response.json();
-    if (!response.ok || !data.accessToken) return false;
-    storeSession(data);
-    return true;
   } catch {
-    return false;
+    if (superseded()) return staleOutcome();
+    return finishRefreshSession({ status: "offline-unverified", httpStatus: null, retryable: true, reason: "network" }, detailed);
   }
+  if (superseded()) return staleOutcome();
+  if (response.status >= 500 || response.status === 408 || response.status === 429) {
+    return finishRefreshSession({ status: "offline-unverified", httpStatus: response.status, retryable: true, reason: "server" }, detailed);
+  }
+  if (response.status === 204 || response.status === 401 || response.status === 403) {
+    const httpStatus = response.status;
+    clearSession();
+    return finishRefreshSession({ status: "anonymous", httpStatus, retryable: false, reason: "no-session" }, detailed);
+  }
+  const data = await response.json().catch(() => null);
+  if (superseded()) return staleOutcome();
+  if (!response.ok || !data?.accessToken || !data?.user?.id) {
+    const httpStatus = response.status;
+    clearSession();
+    return finishRefreshSession({ status: "anonymous", httpStatus, retryable: false, reason: "invalid-response" }, detailed);
+  }
+  const provider = data.provider === "local" ? "local" : "supabase";
+  if (expectedUserId && (data.user.id !== expectedUserId || provider !== expectedProvider)) {
+    clearSession();
+    return finishRefreshSession(
+      { status: "anonymous", httpStatus: response.status, retryable: false, reason: "account-changed" },
+      detailed,
+    );
+  }
+  storeSession(data);
+  return finishRefreshSession({ status: "authenticated", httpStatus: response.status, retryable: false, reason: "verified" }, detailed);
 }
 
 function setBackendStatus(status) {
@@ -308,8 +409,20 @@ function setBackendStatus(status) {
 // last load. Merge our local payload into the server's current payload
 // (per-day last-write-wins, same rules as load-time merging), adopt the
 // server revision, and let the caller retry once with the merged result.
-async function mergeWithServerConflict(response) {
+function captureSyncSessionGuard() {
+  const userId = runtime.authUserId;
+  const generation = runtime.authSessionGeneration;
+  return () => {
+    if (userId === runtime.authUserId && generation === runtime.authSessionGeneration) return;
+    const error = new Error("账号已切换，已忽略原账号的同步响应");
+    error.kind = "stale-session";
+    throw error;
+  };
+}
+
+async function mergeWithServerConflict(response, checkSession) {
   const conflict = (await response.json().catch(() => null))?.conflict;
+  checkSession();
   if (!conflict || !isPlainRecord(conflict)) return null;
   if (clearMarkerOf(conflict)) {
     if (shouldRetainLocalAfterRemoteClear(persistedPayload(), conflict)) {
@@ -349,27 +462,34 @@ function stateWriteAcknowledgement(data) {
   return { revision: data.revision, updatedAt: data.updatedAt };
 }
 
-async function putStatePayload(payload) {
+async function putStatePayload(payload, checkSession) {
   let response = await fetch(API_STATE_URL, {
     method: "PUT",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
-  if (response.status === 401 && (await refreshSession())) {
-    response = await fetch(API_STATE_URL, {
-      method: "PUT",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(payload),
-    });
+  checkSession();
+  if (response.status === 401) {
+    const refreshed = await refreshSession();
+    checkSession();
+    if (refreshed) {
+      response = await fetch(API_STATE_URL, {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      checkSession();
+    }
   }
   return response;
 }
 
-async function writeStateRound() {
+async function writeStateRound(checkSession) {
   let sentMutationRevision = runtime.localMutationRevision;
   let payload = persistedPayload();
-  let response = await putStatePayload(payload);
-  const conflictResolution = response.status === 409 ? await mergeWithServerConflict(response) : null;
+  let response = await putStatePayload(payload, checkSession);
+  const conflictResolution = response.status === 409 ? await mergeWithServerConflict(response, checkSession) : null;
+  checkSession();
   if (conflictResolution && !conflictResolution.retry) {
     return {
       acknowledgement: conflictResolution.acknowledgement,
@@ -380,7 +500,7 @@ async function writeStateRound() {
   if (conflictResolution?.retry) {
     sentMutationRevision = runtime.localMutationRevision;
     payload = persistedPayload();
-    response = await putStatePayload(payload);
+    response = await putStatePayload(payload, checkSession);
   }
   if (!response.ok) {
     const error = new Error(response.status === 409 ? "云端记录再次发生冲突，请稍后重试" : "同步失败");
@@ -388,6 +508,7 @@ async function writeStateRound() {
     throw error;
   }
   const responseData = await response.json().catch(() => null);
+  checkSession();
   const acknowledgement = stateWriteAcknowledgement(responseData);
   if (!acknowledgement) {
     const error = new Error("服务器返回的同步确认无效");
@@ -431,6 +552,7 @@ function rebasePendingLocalChanges(round) {
 
 async function syncStateNow({ silent = true } = {}) {
   if (runtime.syncPromise) return runtime.syncPromise;
+  const checkSession = captureSyncSessionGuard();
   if (clearMarkerOf(persistedPayload())) {
     state.syncPending = false;
     setBackendStatus(runtime.authProvider === "local" ? "device" : "online");
@@ -441,7 +563,7 @@ async function syncStateNow({ silent = true } = {}) {
     const locallySaved = initialLocalWrite.ok;
     state.syncPending = true;
 
-    if (!runtime.accessToken) {
+    if (!runtime.accessToken || runtime.offlineSyncReadRequired) {
       if (!locallySaved && !initialLocalWrite.skipped) setBackendStatus("offline");
       return locallySaved;
     }
@@ -450,7 +572,8 @@ async function syncStateNow({ silent = true } = {}) {
       let acknowledgement;
       let remoteClearAdopted = false;
       while (true) {
-        const round = await writeStateRound();
+        const round = await writeStateRound(checkSession);
+        checkSession();
         acknowledgement = round.acknowledgement;
         remoteClearAdopted ||= Boolean(round.remoteClearAdopted);
         runtime.stateRevision = acknowledgement.revision;
@@ -490,6 +613,13 @@ async function syncStateNow({ silent = true } = {}) {
       }
       return true;
     } catch (error) {
+      if (error.kind === "stale-session") {
+        if (!runtime.authUserId) {
+          state.authRequired = true;
+          syncFeedbackHandler("请重新登录后继续同步");
+        }
+        return false;
+      }
       if (locallySaved) {
         state.syncErrorKind = error.kind || (navigator.onLine === false ? "network" : "server");
         state.syncError = navigator.onLine === false ? "当前离线，联网后可重试" : error.message || "同步失败";
@@ -515,7 +645,7 @@ async function syncStateNow({ silent = true } = {}) {
 
 function scheduleSyncRetry({ silent = true, delay = 2500 } = {}) {
   clearTimeout(runtime.retryTimer);
-  if (!runtime.accessToken) return;
+  if (!runtime.accessToken || runtime.offlineSyncReadRequired) return;
   runtime.retryTimer = setTimeout(() => {
     if (!state.syncPending && state.backendStatus !== "local") return;
     syncStateNow({ silent });
@@ -531,7 +661,7 @@ function saveStoredState() {
   state.syncPending = true;
   clearTimeout(runtime.saveTimer);
   if (!localWrite.ok && !localWrite.skipped) setBackendStatus("offline");
-  if (!runtime.accessToken) return localWrite.ok;
+  if (!runtime.accessToken || runtime.offlineSyncReadRequired) return localWrite.ok;
   if (!runtime.syncPromise) runtime.saveTimer = setTimeout(() => syncStateNow(), 250);
   return localWrite.ok;
 }
@@ -556,6 +686,8 @@ function flushPendingInputSave() {
 export {
   setSyncFeedbackHandler,
   loadStoredState,
+  loadTrustedOfflineState,
+  isTrustedOfflineSession,
   loadServerState,
   authHeaders,
   refreshSession,
@@ -593,4 +725,14 @@ export {
   prepareLocalMutation,
   resetAppData,
 } from "./app-data.js";
-export { userStorageKey, readStorageValue, removeStorageValue, storeSession, clearSession, clearLegacyAuthStorage } from "./app-storage.js";
+export {
+  userStorageKey,
+  readStorageValue,
+  removeStorageValue,
+  storeSession,
+  clearSession,
+  clearLegacyAuthStorage,
+  isOfflineAccessTrusted,
+  setOfflineAccessTrusted,
+  clearOfflineAccessTrust,
+} from "./app-storage.js";

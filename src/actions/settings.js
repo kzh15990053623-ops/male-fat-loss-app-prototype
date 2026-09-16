@@ -1,6 +1,7 @@
 import { state, runtime, AUTH_EMAIL_KEY, API_STATE_URL, CURRENT_SCHEMA_VERSION } from "../app-state.js";
 import { todayKey } from "../app-utils.js";
 import { calorieRecommendation, recommendedProteinGrams } from "../app-logic.js";
+import { isOfflineAccessTrusted, setOfflineAccessTrusted } from "../app-storage.js";
 import {
   upsertMetricLog,
   updateTodayRecord,
@@ -25,11 +26,40 @@ import {
   clearInlineFieldError,
 } from "./services.js";
 
+const numericSettingRanges = {
+  height: { min: 120, max: 230, message: "请输入 120–230cm" },
+  age: { min: 16, max: 80, message: "请输入 16–80 岁" },
+  weight: { min: 40, max: 200, message: "请输入 40–200kg" },
+  waist: { min: 50, max: 180, message: "请输入 50–180cm" },
+  targetWeight: { min: 40, max: 180, message: "请输入 40–180kg" },
+  targetWaist: { min: 50, max: 160, message: "请输入 50–160cm" },
+  calories: { min: 1200, max: 3600, message: "请输入 1200–3600 kcal" },
+  weeklyLoss: { min: 0.1, max: 1.2, message: "请输入 0.1–1.2kg" },
+};
+
+export function createSettingsDraft() {
+  return {
+    height: state.user.height,
+    age: state.user.age,
+    weight: state.weight,
+    waist: state.waist,
+    targetWeight: state.targetWeight,
+    targetWaist: state.targetWaist,
+    weeklyLoss: state.weeklyLossTarget,
+    calories: state.user.dailyCalories,
+    unit: state.preferences.unit,
+    reminderTime: state.preferences.reminderTime,
+    aiAssist: state.preferences.aiAssist,
+    pushEnabled: Boolean(state.preferences.pushEnabled),
+    trustedOfflineAccess: isOfflineAccessTrusted(),
+  };
+}
+
 export function openSettings(action = "settings") {
   runtime.settingsReturnAction = action;
   runtime.settingsReturnHash = location.hash.startsWith("#tab-") ? location.hash : `#tab-${state.activeTab}`;
   state.setupFieldErrors = {};
-  state.settingsDraft = null;
+  state.settingsDraft = createSettingsDraft();
   state.settingsOpen = true;
   if (location.hash !== "#settings") history.pushState(null, "", "#settings");
   render();
@@ -95,20 +125,21 @@ export function settingsValuesFromForm() {
     { key: "aiAssist", selector: "[data-setting-ai]", parse: (raw) => raw !== "off" },
   ]);
   values.pushEnabled = Boolean(document.querySelector("[data-setting-push]")?.checked);
+  values.trustedOfflineAccess = document.querySelector("[data-setting-trusted-offline]")?.checked ?? isOfflineAccessTrusted();
   return values;
 }
 
 export function validateCoreSettings(values) {
   const errors = {};
-  if (values.height < 120 || values.height > 230) errors.height = "请输入 120–230cm";
-  if (values.age < 16 || values.age > 80) errors.age = "请输入 16–80 岁";
-  if (values.waist < 50 || values.waist > 180) errors.waist = "请输入 50–180cm";
-  if (values.targetWeight < 40 || values.targetWeight > 180) errors.targetWeight = "请输入 40–180kg";
-  else if (values.weight && values.targetWeight >= values.weight) errors.targetWeight = "减脂目标必须低于当前体重";
-  if (values.targetWaist < 50 || values.targetWaist > 160) errors.targetWaist = "请输入 50–160cm";
-  else if (values.waist && values.targetWaist >= values.waist) errors.targetWaist = "目标腰围必须低于当前腰围";
-  if (values.calories < 1200 || values.calories > 3600) errors.calories = "请输入 1200–3600 kcal";
-  if (values.weeklyLoss < 0.1 || values.weeklyLoss > 1.2) errors.weeklyLoss = "请输入 0.1–1.2kg";
+  Object.entries(numericSettingRanges).forEach(([key, range]) => {
+    if (!Number.isFinite(values[key]) || values[key] < range.min || values[key] > range.max) errors[key] = range.message;
+  });
+  if (!errors.weight && !errors.targetWeight && values.targetWeight >= values.weight) {
+    errors.targetWeight = "减脂目标必须低于当前体重";
+  }
+  if (!errors.waist && !errors.targetWaist && values.targetWaist >= values.waist) {
+    errors.targetWaist = "目标腰围必须低于当前腰围";
+  }
   return errors;
 }
 
@@ -137,7 +168,7 @@ function showSettingsErrors(errors, values) {
   state.settingsDraft = values;
   render();
   const firstKey = Object.keys(errors)[0];
-  requestAnimationFrame(() => document.querySelector(`[name="${firstKey}"]`)?.focus({ preventScroll: false }));
+  requestAnimationFrame(() => document.querySelector(`[data-setting-field="${firstKey}"]`)?.focus({ preventScroll: false }));
 }
 
 export async function saveSettingsFromForm() {
@@ -148,6 +179,10 @@ export async function saveSettingsFromForm() {
   state.settingsDraft = { ...values };
   return runExclusiveAction("saveSettings", async () => {
     try {
+      const trustChanged = values.trustedOfflineAccess !== isOfflineAccessTrusted();
+      if (trustChanged && !setOfflineAccessTrusted(values.trustedOfflineAccess)) {
+        throw new Error("未能保存此设备的离线查看设置，请确认账号仍处于登录状态");
+      }
       applySettingsValues(values);
       state.setupFieldErrors = {};
       upsertMetricLog("weightLogs", state.weight);
@@ -280,7 +315,16 @@ export function applyRecommendedCalories() {
   render();
 }
 
-export function handleSettingNumberInput(input) {
-  if (state.settingsDraft && input.name) state.settingsDraft[input.name] = Number(input.value || 0);
+export function handleSettingControlInput(input) {
+  if (!input.name) return;
+  if (!state.settingsDraft) state.settingsDraft = createSettingsDraft();
+  let value = input.value;
+  if (input.matches('[type="checkbox"]')) value = input.checked;
+  // 保留空值、0 和小数输入的原样草稿；提交时再统一转成数字校验。
+  else if (input.matches("[data-setting-field]")) value = input.value;
+  else if (input.matches("[data-setting-ai]")) value = input.value !== "off";
+  state.settingsDraft[input.name] = value;
   clearInlineFieldError(input, state.setupFieldErrors, input.name);
 }
+
+export const handleSettingNumberInput = handleSettingControlInput;
