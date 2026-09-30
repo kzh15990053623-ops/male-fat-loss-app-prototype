@@ -33,3 +33,7 @@ minimum_password_length = 8
 [auth.email]
 enable_signup = true
 enable_confirmations = false
+
+# Custom server credential is verified in the function before any budget action.
+[functions.nutrition-budget-gateway]
+verify_jwt = false

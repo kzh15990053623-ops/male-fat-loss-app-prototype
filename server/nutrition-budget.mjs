@@ -7,6 +7,7 @@ import {
   nutritionAiAllowedUserId,
   nutritionAiBudgetPath,
   nutritionAiMonthlyBudgetMicros,
+  nutritionAiBudgetGatewayToken,
   supabaseUrl,
   supabaseServiceRoleKey,
 } from "./config.mjs";
@@ -116,13 +117,19 @@ async function localOperation(action, requestId, usage) {
 async function operation(action, requestId = null, usage = null) {
   try {
     if (hostedRuntime) {
-      if (!supabaseUrl || !supabaseServiceRoleKey) throw unavailable();
-      const response = await fetch(`${supabaseUrl}/rest/v1/rpc/nutrition_budget`, {
-        method: "POST",
-        signal: AbortSignal.timeout(5000),
-        headers: supabaseApiHeaders(supabaseServiceRoleKey, "", { "Content-Type": "application/json" }),
-        body: JSON.stringify({ p_action: action, p_request_id: requestId, p_limit: nutritionAiMonthlyBudgetMicros, p_usage: usage }),
-      });
+      if (!supabaseUrl || (!supabaseServiceRoleKey && !nutritionAiBudgetGatewayToken)) throw unavailable();
+      const useGateway = Boolean(nutritionAiBudgetGatewayToken);
+      const response = await fetch(
+        `${supabaseUrl}${useGateway ? "/functions/v1/nutrition-budget-gateway" : "/rest/v1/rpc/nutrition_budget"}`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(useGateway ? 10000 : 5000),
+          headers: useGateway
+            ? { "Content-Type": "application/json", "X-Budget-Token": nutritionAiBudgetGatewayToken }
+            : supabaseApiHeaders(supabaseServiceRoleKey, "", { "Content-Type": "application/json" }),
+          body: JSON.stringify({ p_action: action, p_request_id: requestId, p_limit: nutritionAiMonthlyBudgetMicros, p_usage: usage }),
+        },
+      );
       if (!response.ok) throw unavailable();
       const data = await response.json();
       if (
