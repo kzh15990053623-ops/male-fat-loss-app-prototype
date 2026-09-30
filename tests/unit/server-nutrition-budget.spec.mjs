@@ -12,6 +12,7 @@ beforeEach(async () => {
   Object.assign(config, {
     hostedRuntime: false,
     nutritionAiAllowedUserId: "",
+    nutritionAiBudgetGatewayToken: "",
     nutritionAiBudgetPath: join(directory, "ledger.json"),
     nutritionAiMonthlyBudgetMicros: 300000,
     supabaseUrl: "https://db.test",
@@ -142,5 +143,32 @@ describe("durable budget and personal account gate", () => {
     vi.stubGlobal("fetch", fetchMock);
     await expect(service.nutritionBudgetStatus()).resolves.toMatchObject({ remainingRequests: 3 });
     expect(new Headers(fetchMock.mock.calls[0][1].headers).get("apikey")).toBe(config.supabaseServiceRoleKey);
+  });
+  it("uses a limited gateway token without an admin key and fails closed if the gateway fails", async () => {
+    config.hostedRuntime = true;
+    config.supabaseServiceRoleKey = "";
+    config.nutritionAiBudgetGatewayToken = "a1".repeat(32);
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        allowed: true,
+        month: "2026-10",
+        reservedCny: 0,
+        limitCny: 0.3,
+        estimatedCny: 0,
+        requests: 0,
+        remainingRequests: 3,
+        unreportedRequests: 0,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(service.nutritionBudgetStatus()).resolves.toMatchObject({ requests: 0 });
+    expect(fetchMock.mock.calls[0][0]).toBe("https://db.test/functions/v1/nutrition-budget-gateway");
+    const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+    expect(headers.get("X-Budget-Token")).toBe(config.nutritionAiBudgetGatewayToken);
+    expect(headers.has("apikey")).toBe(false);
+    expect(headers.has("Authorization")).toBe(false);
+    fetchMock.mockResolvedValueOnce(new Response("no", { status: 401 }));
+    await expect(service.reserveNutritionBudget("a")).rejects.toMatchObject({ code: "AI_BUDGET_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
