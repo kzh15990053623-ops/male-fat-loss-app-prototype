@@ -4,6 +4,7 @@
 services:
   - type: web
     name: male-fat-loss-app-prototype
+    branch: main
     runtime: node
     plan: free
     buildCommand: npm ci
@@ -34,6 +35,10 @@ services:
       - key: NUTRITION_AI_MODEL
         sync: false
       - key: NUTRITION_AI_PROTOCOL
-        value: openai-compatible
+        value: deepseek
       - key: NUTRITION_AI_TIMEOUT_MS
-        value: "15000"
+        value: "30000"
+      - key: NUTRITION_AI_ALLOWED_USER_ID
+        sync: false
+      - key: NUTRITION_AI_MONTHLY_BUDGET_CNY
+        value: "100"

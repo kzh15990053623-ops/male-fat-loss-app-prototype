@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const config = vi.hoisted(() => ({}));
+const budget = vi.hoisted(() => ({
+  assertNutritionOwner: vi.fn(),
+  nutritionBudgetStatus: vi.fn(),
+  reserveNutritionBudget: vi.fn(),
+  reportNutritionUsage: vi.fn(),
+}));
 vi.mock("../../server/config.mjs", () => config);
+vi.mock("../../server/nutrition-budget.mjs", () => budget);
 const nutrition = { calories: 500, protein: 30, carbs: 60, fat: 15, confidence: 0.9, details: [] };
 const response = (payload, status = 200) => new Response(JSON.stringify(payload), { status, headers: { "x-request-id": "upstream-id" } });
 let service;
 beforeEach(async () => {
+  for (const mock of Object.values(budget)) mock.mockReset();
+  budget.reserveNutritionBudget.mockResolvedValue({ reservedCny: 0.1 });
+  budget.reportNutritionUsage.mockResolvedValue(null);
+  budget.nutritionBudgetStatus.mockResolvedValue({ reservedCny: 0.2 });
   vi.resetModules();
   Object.assign(config, {
     nutritionAiEndpoint: "https://nutrition.test/estimate",
@@ -19,6 +30,95 @@ beforeEach(async () => {
     vi.fn().mockImplementation(async () => response(nutrition)),
   );
   service = await import("../../server/nutrition.mjs");
+});
+
+describe("DeepSeek photos and spending boundary", () => {
+  const photo = `data:image/jpeg;base64,${Buffer.from([255, 216, 255, 192, 0, 11, 8, 0, 10, 0, 20, 1, 1, 17, 0, 255, 217]).toString("base64")}`;
+  function useDeepseek() {
+    Object.assign(config, {
+      nutritionAiProtocol: "deepseek",
+      nutritionAiEndpoint: "https://api.deepseek.com/chat/completions",
+      nutritionAiModel: "deepseek-flash",
+    });
+    fetch.mockImplementation(async () =>
+      response({
+        ...nutrition,
+        details: [{ ...nutrition, name: "米饭", amount: "一碗", grams: 150 }],
+        usage: { prompt_tokens: 1700, completion_tokens: 500 },
+      }),
+    );
+  }
+  it("accepts a photo without text, bounds output, disables thinking and always requires review", async () => {
+    useDeepseek();
+    const result = await service.requestNutritionEstimate("", { extra: "private", oilGrams: 0 }, { imageDataUrl: photo, userId: "owner" });
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body).toMatchObject({ model: "deepseek-flash", max_tokens: 2048, thinking: { type: "disabled" } });
+    expect(body.messages[1].content).toEqual([
+      { type: "text", text: JSON.stringify({ foodText: "", context: { oilGrams: null }, locale: "zh-CN" }) },
+      { type: "image_url", image_url: { url: photo, detail: "high" } },
+    ]);
+    expect(result).toMatchObject({ inputMode: "photo", foodText: "米饭（一碗）", needsReview: true, budget: { reservedCny: 0.1 } });
+    expect(JSON.stringify(result)).not.toContain("base64");
+    expect(budget.assertNutritionOwner).toHaveBeenCalledWith("owner");
+    expect(budget.reserveNutritionBudget.mock.invocationCallOrder[0]).toBeLessThan(fetch.mock.invocationCallOrder[0]);
+    expect(budget.reportNutritionUsage).toHaveBeenCalledWith(expect.any(String), { prompt_tokens: 1700, completion_tokens: 500 });
+  });
+  it("blocks before spending on invalid photo, unsupported vision, wrong endpoint/model/key or denied owner", async () => {
+    await expect(service.requestNutritionEstimate("饭", {}, { imageDataUrl: "https://localhost/private" })).rejects.toMatchObject({
+      code: "AI_INVALID_IMAGE",
+    });
+    await expect(service.requestNutritionEstimate("饭", {}, { imageDataUrl: photo })).rejects.toMatchObject({
+      code: "AI_VISION_NOT_CONFIGURED",
+    });
+    useDeepseek();
+    for (const key of ["nutritionAiEndpoint", "nutritionAiModel", "nutritionAiApiKey"]) {
+      const original = config[key];
+      config[key] = "wrong";
+      // The key must be blank or a placeholder to be detectably unconfigured.
+      if (key === "nutritionAiApiKey") config[key] = "your-key";
+      await expect(service.requestNutritionEstimate("饭")).rejects.toMatchObject({ code: "AI_PROVIDER_NOT_CONFIGURED" });
+      config[key] = original;
+    }
+    budget.assertNutritionOwner.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "AI_ACCOUNT_NOT_ALLOWED" });
+    });
+    await expect(service.requestNutritionEstimate("饭")).rejects.toMatchObject({ code: "AI_ACCOUNT_NOT_ALLOWED" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(budget.reserveNutritionBudget).not.toHaveBeenCalled();
+  });
+  it("does not dispatch when reservation fails and keeps the reservation after upstream failure", async () => {
+    useDeepseek();
+    budget.reserveNutritionBudget.mockRejectedValueOnce(Object.assign(new Error("limit"), { code: "AI_MONTHLY_BUDGET_EXCEEDED" }));
+    await expect(service.requestNutritionEstimate("饭")).rejects.toMatchObject({ code: "AI_MONTHLY_BUDGET_EXCEEDED" });
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockRejectedValueOnce(new Error("network"));
+    await expect(service.requestNutritionEstimate("饭")).rejects.toMatchObject({ code: "AI_NETWORK_ERROR" });
+    expect(budget.reserveNutritionBudget).toHaveBeenCalledTimes(2);
+    expect(budget.reportNutritionUsage).not.toHaveBeenCalled();
+  });
+  it("retains a result when usage reporting fails, rejects no-food photos and malformed results after charging", async () => {
+    useDeepseek();
+    budget.reportNutritionUsage.mockRejectedValueOnce(new Error("database timeout"));
+    expect(await service.requestNutritionEstimate("饭")).toMatchObject({ budget: { reservedCny: 0.1 } });
+    fetch.mockResolvedValueOnce(response(nutrition));
+    await expect(service.requestNutritionEstimate("", {}, { imageDataUrl: photo })).rejects.toMatchObject({ code: "AI_FOOD_NOT_FOUND" });
+    fetch.mockResolvedValueOnce(response({ broken: true, usage: { prompt_tokens: 100, completion_tokens: 10 } }));
+    await expect(service.requestNutritionEstimate("未知食物")).rejects.toMatchObject({ code: "AI_INVALID_RESPONSE" });
+    expect(budget.reserveNutritionBudget).toHaveBeenCalledTimes(3);
+    expect(budget.reportNutritionUsage).toHaveBeenCalledTimes(3);
+  });
+  it("scopes caches by photo and user and returns fresh budget without spending on a cache hit", async () => {
+    useDeepseek();
+    await service.requestNutritionEstimate("饭", {}, { imageDataUrl: photo, userId: "a" });
+    expect(await service.requestNutritionEstimate("饭", {}, { imageDataUrl: photo, userId: "a" })).toMatchObject({
+      cached: true,
+      budget: { reservedCny: 0.2 },
+    });
+    await service.requestNutritionEstimate("饭", {}, { imageDataUrl: photo, userId: "b" });
+    await service.requestNutritionEstimate("饭", {}, { userId: "a" });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(budget.reserveNutritionBudget).toHaveBeenCalledTimes(3);
+  });
 });
 afterEach(() => {
   vi.unstubAllGlobals();

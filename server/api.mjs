@@ -2,6 +2,7 @@ import { localAuthEnabled, MAX_JSON_BODY_BYTES, REFRESH_COOKIE_NAME } from "./co
 import { baseHeaders, clearRefreshCookieHeader, cookieFromRequest, refreshCookieHeader } from "./http.mjs";
 import { isLocalRefreshToken, localAuthService } from "./local-auth.mjs";
 import { nutritionAiConfigured, requestNutritionEstimate } from "./nutrition.mjs";
+import { assertNutritionOwner, nutritionBudgetStatus } from "./nutrition-budget.mjs";
 import { assertWithinRateLimit, clientIp } from "./rate-limit.mjs";
 import {
   assertSupabaseAuthReady,
@@ -272,6 +273,12 @@ export async function handleApi(request, response, url) {
     return true;
   }
 
+  if (url.pathname === "/api/ai/budget" && request.method === "GET") {
+    assertNutritionOwner(auth.user.id);
+    sendJson(response, 200, await nutritionBudgetStatus());
+    return true;
+  }
+
   if (url.pathname === "/api/ai/nutrition" && request.method === "POST") {
     assertWithinRateLimit(`ai-nutrition:${auth.user.id}`, {
       ...AI_RATE_LIMIT_MINUTE,
@@ -286,6 +293,8 @@ export async function handleApi(request, response, url) {
     const payload = await readJsonBody(request);
     const result = await requestNutritionEstimate(payload.foodText, payload.context || {}, {
       locale: "zh-CN",
+      imageDataUrl: payload.imageDataUrl,
+      userId: auth.user.id,
     });
     sendJson(response, 200, result);
     return true;
