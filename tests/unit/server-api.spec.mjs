@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   assertWithinRateLimit: vi.fn(),
   requestNutritionEstimate: vi.fn(),
   nutritionAiConfigured: vi.fn(),
+  assertNutritionOwner: vi.fn(),
+  nutritionBudgetStatus: vi.fn(),
   local: {
     signup: vi.fn(),
     login: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("../../server/config.mjs", () => ({
   REFRESH_COOKIE_NAME: "fat_loss_refresh",
 }));
 vi.mock("../../server/supabase.mjs", () => mocks);
+vi.mock("../../server/nutrition-budget.mjs", () => mocks);
 vi.mock("../../server/local-auth.mjs", () => ({
   localAuthService: mocks.local,
   isLocalRefreshToken: (token) => token.startsWith("local-"),
@@ -74,6 +77,23 @@ beforeEach(() => {
 });
 
 describe("API contracts and failure boundaries", () => {
+  it("authenticates budget reads, authorizes the owner and forwards photos with server-authenticated identity", async () => {
+    mocks.nutritionBudgetStatus.mockResolvedValue({ limitCny: 100 });
+    const status = request("/api/ai/budget");
+    await status.run();
+    expect(status.res.body).toEqual({ limitCny: 100 });
+    expect(mocks.assertNutritionOwner).toHaveBeenCalledWith("user-a");
+    const photo = request("/api/ai/nutrition", "POST", { imageDataUrl: "data:image/jpeg;base64,abc", userId: "attacker" });
+    await photo.run();
+    expect(mocks.requestNutritionEstimate).toHaveBeenCalledWith(
+      undefined,
+      {},
+      { locale: "zh-CN", userId: "user-a", imageDataUrl: "data:image/jpeg;base64,abc" },
+    );
+    mocks.currentUserFromRequest.mockRejectedValue(Object.assign(new Error("login required"), { status: 401 }));
+    await expect(request("/api/ai/budget").run()).rejects.toMatchObject({ status: 401 });
+    expect(mocks.nutritionBudgetStatus).toHaveBeenCalledTimes(1);
+  });
   it("health does not need authentication and readiness reports dependency failure", async () => {
     const health = request("/api/health");
     await health.run();
