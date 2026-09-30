@@ -9,6 +9,7 @@ import {
 } from "./config.mjs";
 import { defaultData, isRecord, normalizeAppData, sanitizeMeals, stateRevision, stateWriteRevision, storedStateForWrite } from "./data.mjs";
 import { isLocalAccessToken, localAuthService } from "./local-auth.mjs";
+import { supabaseApiHeaders } from "./supabase-headers.mjs";
 
 let authReadinessCache = { key: "", expiresAt: 0, value: null };
 
@@ -61,16 +62,8 @@ export function isSupabaseConfigured() {
   return validateSupabaseConfig().valid;
 }
 
-function headersFor(anonKey, accessToken = "", extra = {}) {
-  return {
-    apikey: anonKey,
-    Authorization: `Bearer ${accessToken || anonKey}`,
-    ...extra,
-  };
-}
-
 function supabaseHeaders(accessToken = "", extra = {}) {
-  return headersFor(supabaseAnonKey, accessToken, extra);
+  return supabaseApiHeaders(supabaseAnonKey, accessToken, extra);
 }
 
 async function parseResponseBody(response) {
@@ -186,7 +179,7 @@ export async function probeSupabaseAuth({
   try {
     const response = await fetchImpl(`${config.url}/auth/v1/settings`, {
       method: "GET",
-      headers: headersFor(config.anonKey),
+      headers: supabaseApiHeaders(config.anonKey),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const data = await parseResponseBody(response);
@@ -496,10 +489,7 @@ async function requestSupabaseAdmin(path, { method = "GET" } = {}) {
   try {
     response = await fetch(`${config.url}${path}`, {
       method,
-      headers: {
-        apikey: supabaseServiceRoleKey,
-        Authorization: `Bearer ${supabaseServiceRoleKey}`,
-      },
+      headers: supabaseApiHeaders(supabaseServiceRoleKey),
       signal: AbortSignal.timeout(supabaseRequestTimeoutMs),
     });
   } catch (error) {
