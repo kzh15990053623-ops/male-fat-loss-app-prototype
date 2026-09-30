@@ -11,9 +11,10 @@ loadDotEnv(join(root, ".env"));
 export const port = Number(process.env.PORT || 5173);
 export const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
 export const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
-// Server-only service-role key for account deletion and hosted AI budget RPCs.
-// Never exposed to the client; leave empty to disable both capabilities.
+// Server-only key for account deletion and direct hosted AI budget RPCs.
+// The limited budget gateway can run without exporting this key from Supabase.
 export const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+export const nutritionAiBudgetGatewayToken = String(process.env.NUTRITION_AI_BUDGET_GATEWAY_TOKEN || "").trim();
 
 function boundedNumber(value, fallback, min, max) {
   const parsed = Number(value);

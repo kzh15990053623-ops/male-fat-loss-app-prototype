@@ -19,6 +19,7 @@ beforeAll(async () => {
     "create role anon; create role authenticated; create role service_role; grant usage on schema public to anon, authenticated, service_role;",
   );
   await db.exec(await readFile(new URL("../../supabase/migrations/202609210001_nutrition_budget.sql", import.meta.url), "utf8"));
+  await db.exec(await readFile(new URL("../../supabase/migrations/202610010001_nutrition_budget_gateway.sql", import.meta.url), "utf8"));
 }, 30000);
 beforeEach(async () => {
   await db.exec("reset role; truncate public.nutrition_ai_usage;");
@@ -28,6 +29,21 @@ afterAll(async () => {
 });
 
 describe("PostgreSQL budget migration", () => {
+  it("keeps the gateway credential hash inaccessible to browser roles", async () => {
+    await db.query("insert into public.nutrition_budget_gateway_credentials(token_hash) values ($1)", ["a1".repeat(32)]);
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await expect(db.query("select token_hash from public.nutrition_budget_gateway_credentials")).rejects.toThrow(/permission denied/);
+      await expect(db.query("insert into public.nutrition_budget_gateway_credentials(token_hash) values ('bad')")).rejects.toThrow(
+        /permission denied/,
+      );
+      await db.exec("reset role");
+    }
+    const { rows } = await db.query(
+      "select has_table_privilege('service_role', 'public.nutrition_budget_gateway_credentials', 'select') as allowed",
+    );
+    expect(rows[0].allowed).toBe(true);
+  });
   it("enforces a shared cap, never refunds reported calls, and rejects duplicate reservations", async () => {
     const id = randomUUID();
     await call("reserve", id);
