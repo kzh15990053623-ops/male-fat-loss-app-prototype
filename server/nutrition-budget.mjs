@@ -1,6 +1,7 @@
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { supabaseApiHeaders } from "./supabase-headers.mjs";
 import {
   hostedRuntime,
   nutritionAiAllowedUserId,
@@ -119,7 +120,7 @@ async function operation(action, requestId = null, usage = null) {
       const response = await fetch(`${supabaseUrl}/rest/v1/rpc/nutrition_budget`, {
         method: "POST",
         signal: AbortSignal.timeout(5000),
-        headers: { "Content-Type": "application/json", apikey: supabaseServiceRoleKey, Authorization: `Bearer ${supabaseServiceRoleKey}` },
+        headers: supabaseApiHeaders(supabaseServiceRoleKey, "", { "Content-Type": "application/json" }),
         body: JSON.stringify({ p_action: action, p_request_id: requestId, p_limit: nutritionAiMonthlyBudgetMicros, p_usage: usage }),
       });
       if (!response.ok) throw unavailable();
