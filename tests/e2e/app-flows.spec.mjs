@@ -117,9 +117,16 @@ test("离线记录先落本地，恢复联网后自动同步", async ({ page, co
 
 test("AI 覆盖识别中、成功复核、离线、限流和不可重试失败", async ({ page, context }) => {
   let mode = "review";
+  let releaseFirst;
+  let first = true;
   await page.route("**/api/ai/nutrition", async (route) => {
     if (mode === "review" || mode === "success") {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (first) {
+        first = false;
+        await new Promise((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
       const needsReview = mode === "review";
       return route.fulfill({
         status: 200,
@@ -154,10 +161,12 @@ test("AI 覆盖识别中、成功复核、离线、限流和不可重试失败",
   });
   await openFreshApp(page);
   await seedApp(page, { variant: "partial", tab: "diet" });
-  await expect(page.locator(".composer-note")).toContainText("不会静默使用本地规则结果");
+  await expect(page.locator(".composer-note")).toContainText("保存前请核对份量");
   await page.locator("[data-meal-food]").fill("一份鸡肉饭");
   await page.locator("[data-ai-nutrition]").click();
   await expect(page.locator("[data-ai-nutrition]")).toHaveAttribute("aria-busy", "true");
+  await expect.poll(() => typeof releaseFirst).toBe("function");
+  releaseFirst();
   await expect(page.locator(".nutrition-result.needs-review")).toContainText("置信度 69%");
   await page.locator(".advanced-fields > summary").click();
   await page.locator("[data-meal-calories]").fill("620");

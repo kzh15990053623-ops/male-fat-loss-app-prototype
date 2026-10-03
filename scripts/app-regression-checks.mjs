@@ -137,6 +137,7 @@ async function checkStaticSecurity(origin) {
     "/src/styles/base.css",
     "/src/styles/components.css",
     "/src/styles/pages.css",
+    "/src/styles/ink-jade-theme.css",
     "/sw.js",
   ]) {
     const response = await fetch(`${origin}${path}`);
@@ -221,7 +222,22 @@ async function checkStaticSecurity(origin) {
   const localState = await fetch(`${origin}/api/state`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${localSession.accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ state: { schemaVersion: 3, setupCompleted: true, weight: 85.6 }, meals: [], revision: 0 }),
+    body: JSON.stringify({
+      state: {
+        schemaVersion: 3,
+        setupCompleted: true,
+        weight: 85.6,
+        user: {},
+        preferences: {},
+        dailyRecords: {},
+        taskOverrides: {},
+        weightLogs: [],
+        waistLogs: [],
+        customActivities: [],
+      },
+      meals: [],
+      revision: 0,
+    }),
   });
   assert.equal(localState.status, 200);
   const firstStatePayload = await localState.json();
@@ -263,7 +279,18 @@ async function checkStaticSecurity(origin) {
     method: "PUT",
     headers: { Authorization: `Bearer ${localSession.accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      state: { schemaVersion: 3, setupCompleted: true, weight: 84 },
+      state: {
+        schemaVersion: 3,
+        setupCompleted: true,
+        weight: 84,
+        user: {},
+        preferences: {},
+        dailyRecords: {},
+        taskOverrides: {},
+        weightLogs: [],
+        waistLogs: [],
+        customActivities: [],
+      },
       meals: [],
       revision: serverPayload.revision - 1,
     }),
@@ -278,7 +305,18 @@ async function checkStaticSecurity(origin) {
     method: "PUT",
     headers: { Authorization: `Bearer ${localSession.accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      state: { schemaVersion: 3, setupCompleted: true, weight: 85.6 },
+      state: {
+        schemaVersion: 3,
+        setupCompleted: true,
+        weight: 85.6,
+        user: {},
+        preferences: {},
+        dailyRecords: {},
+        taskOverrides: {},
+        weightLogs: [],
+        waistLogs: [],
+        customActivities: [],
+      },
       meals: [],
       revision: staleBody.conflict.revision,
     }),
@@ -450,7 +488,11 @@ function resetFrontendState(state, meals, snapshot, mealSnapshot) {
 function assertSafeMarkup(markup, page, scenario) {
   assert.equal(typeof markup, "string");
   assert.ok(markup.length > 200, `${page}/${scenario} should render meaningful markup`);
-  assert.doesNotMatch(markup, /\b(?:NaN|undefined)\b/, `${page}/${scenario} leaked invalid data`);
+  assert.doesNotMatch(
+    markup,
+    /\b(?:NaN|undefined)\b/,
+    `${page}/${scenario} leaked invalid data: ${markup.match(/.{0,70}\b(?:NaN|undefined)\b.{0,70}/)?.[0] || ""}`,
+  );
   assert.doesNotMatch(markup, /420\s*kcal/, `${page}/${scenario} leaked the old demo burn value`);
 }
 

@@ -1,28 +1,18 @@
 import { state, runtime } from "../../app-state.js";
 import { icon, escapeHtml } from "../../app-utils.js";
-import {
-  totalIntake,
-  totalBurned,
-  remainingCalories,
-  weightSeries,
-  weeklyCompletionSummary,
-  todayTasks,
-  computeStreak,
-  coachPlan,
-  reviewSummary,
-} from "../../app-logic.js";
-import { pageHeader, lineChart } from "../shared.js";
+import { weightSeries, weeklyCompletionSummary, todayTasks, computeStreak, coachPlan, reviewSummary } from "../../app-logic.js";
+import { pageHeader, lineChart, renderEnergyBudget } from "../shared.js";
 
 export function renderHome() {
   const weeklyProgress = weeklyCompletionSummary();
   const streak = computeStreak(state.dailyRecords);
-  const remaining = remainingCalories();
   const allTasks = todayTasks();
   const focusTasks = ["饮食记录", "训练", "喝水"].map((label) => allTasks.find((task) => task.label === label)).filter(Boolean);
   return `
     ${pageHeader("今天", renderStreakSubtitle(streak), `<button class="icon-button" data-app-action="goal" aria-label="目标与设置">${icon("settings")}</button>`)}
 
-    <section class="hero-panel lab-hero">
+    <section class="hero-panel lab-hero content-section section-overview" aria-labelledby="home-overview-title">
+      <div class="section-title"><h2 id="home-overview-title">今日概览</h2></div>
       <div class="hero-measure">
         <div>
           <span class="metric-label">当前体重</span>
@@ -30,35 +20,32 @@ export function renderHome() {
         </div>
         <div class="hero-waist">
           <span class="metric-label">腰围</span>
-          <strong>${state.waist}<small>cm</small></strong>
+          <strong>${state.waist > 0 ? `${state.waist}<small>cm</small>` : "待补充"}</strong>
         </div>
       </div>
-      <div class="weekly-progress" data-progress="${escapeHtml(weeklyProgress.percent ?? 0)}" aria-label="${escapeHtml(weeklyProgress.percent === null ? "本周还没有行动记录" : `本周行动完成度 ${weeklyProgress.percent}%`)}">
-        <span>本周行动</span>
-        <strong>${weeklyProgress.percent === null ? "从第一笔开始" : `<span data-count-up data-count-key="weekly-progress" data-count-value="${escapeHtml(weeklyProgress.percent)}" data-count-decimals="0">${weeklyProgress.percent}</span>%`}</strong>
-        <span class="weekly-progress-track" aria-hidden="true"><i></i></span>
-      </div>
-      <div class="home-budget-strip" aria-label="今日热量概览">
-        <div><span>剩余可摄入</span><strong class="${escapeHtml(remaining < 0 ? "negative" : "")}">${remaining}<small>kcal</small></strong></div>
-        <div><span>今日摄入</span><strong>${totalIntake()}<small>kcal</small></strong></div>
-        <div><span>运动消耗</span><strong>${totalBurned()}<small>kcal</small></strong></div>
-      </div>
+      ${renderEnergyBudget()}
     </section>
 
-    <section class="quick-capture-panel focus-board" aria-label="快速记录">
+    <section class="quick-capture-panel focus-board content-section section-form" aria-label="快速记录">
       <div class="section-title">
         <div><h2>现在记录</h2></div>
         <span>今日三件事 · ${focusTasks.filter((task) => task.done).length} / ${focusTasks.length}</span>
       </div>
       <div class="focus-list">${focusTasks.map(renderFocusTask).join("")}</div>
+      <div class="weekly-progress" data-progress="${escapeHtml(weeklyProgress.percent ?? 0)}" aria-label="${escapeHtml(weeklyProgress.percent === null ? "本周还没有行动记录" : `本周行动完成度 ${weeklyProgress.percent}%`)}">
+        <span>本周行动</span>
+        <strong>${weeklyProgress.percent === null ? "从第一笔开始" : `<span data-count-up data-count-key="weekly-progress" data-count-value="${escapeHtml(weeklyProgress.percent)}" data-count-decimals="0">${weeklyProgress.percent}</span>%`}</strong>
+        <span class="weekly-progress-track" aria-hidden="true"><i></i></span>
+      </div>
       <form class="quick-weight-card" id="body-record-form" data-body-form>
+        <h3 class="subsection-title">身体记录</h3>
         <label class="field-label">
           <span>体重 (kg)</span>
           <input data-weight-input name="weight" type="number" inputmode="decimal" autocomplete="off" min="40" max="200" step="0.1" value="${escapeHtml(state.weightDraft || state.weight)}" />
         </label>
         <label class="field-label">
-          <span>腰围 (cm)</span>
-          <input data-waist-input name="waist" type="number" inputmode="decimal" autocomplete="off" min="50" max="180" step="0.1" value="${escapeHtml(state.waistDraft || state.waist)}" />
+          <span>腰围 (cm，选填)</span>
+          <input data-waist-input name="waist" type="number" inputmode="decimal" autocomplete="off" min="50" max="180" step="0.1" value="${escapeHtml(typeof state.waistDraft === "string" ? state.waistDraft : "")}" placeholder="${escapeHtml(state.waist > 0 ? `上次 ${state.waist}` : "量过后再补充")}" />
         </label>
         <button class="primary-small" type="submit" data-save-body>${icon("check")}保存</button>
       </form>
@@ -83,7 +70,7 @@ function renderFocusTask(task) {
   const action = task.label === "饮食记录" ? "diet" : task.label === "训练" ? "training" : "water";
   const justCompleted = runtime.completionFeedback?.tasks?.includes(task.label);
   return `
-    <button class="focus-item ${escapeHtml(task.done ? "done" : "")} ${escapeHtml(justCompleted ? "just-completed" : "")}" type="button" ${action === "water" ? 'data-habit-step="water" data-step-direction="1"' : `data-coach-action="${escapeHtml(action)}"`}>
+    <button class="focus-item ${escapeHtml(task.done ? "done" : "")} ${escapeHtml(justCompleted ? "just-completed" : "")}" data-domain="${escapeHtml(action)}" type="button" ${action === "water" ? 'data-habit-step="water" data-step-direction="1"' : `data-coach-action="${escapeHtml(action)}"`}>
       <span class="focus-symbol" aria-hidden="true">${icon(action === "diet" ? "fork" : action === "training" ? "dumbbell" : "water")}</span>
       <span class="focus-copy"><strong>${escapeHtml(task.label)}</strong><small>${escapeHtml(task.value)}</small></span>
       <span class="focus-status" aria-label="${escapeHtml(task.done ? "已完成" : "待完成")}">${task.done ? icon("check") : icon("arrow")}</span>
@@ -95,7 +82,7 @@ function renderHomeWeightTrend() {
   const weights = weightSeries().slice(-7);
   if (weights.length < 2) {
     return `
-      <section class="home-trend-card trend-empty compact-empty">
+      <section class="home-trend-card trend-empty compact-empty content-section section-chart">
         <div>
           <h2>体重趋势待生成</h2>
           <p>再记录 ${2 - weights.length} 次体重，就能看到真实变化。</p>
@@ -108,14 +95,14 @@ function renderHomeWeightTrend() {
   const delta = Number((weights.at(-1).value - weights[0].value).toFixed(1));
   const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
   return `
-    <section class="home-trend-card">
+    <section class="home-trend-card content-section section-chart">
       <div>
         <div class="section-title">
           <h2>体重趋势</h2>
-          <span>近 7 天</span>
+          <span>近 7 次记录</span>
         </div>
         <strong>${state.weight}<small>kg</small></strong>
-        <p>较上周 <span>${deltaText} kg</span></p>
+        <p>较区间起点 <span>${deltaText} kg</span></p>
       </div>
       ${lineChart(weights, "首页近 7 次体重趋势折线图", "homeWeightTrendFill", "kg")}
     </section>
@@ -126,7 +113,7 @@ function renderSmartCoach() {
   const plan = coachPlan();
   const review = reviewSummary();
   return `
-    <section class="coach-card">
+    <section class="coach-card content-section section-advice">
       <div class="section-title"><h2>教练洞察</h2></div>
       <div class="coach-plan-list">
         ${plan.actions
@@ -153,9 +140,9 @@ function renderHabitControls() {
   const stepsPercent = Math.min(100, Math.round((state.steps / state.stepsTarget) * 100));
   const sleepPercent = Math.min(100, Math.round((state.sleep / 7.5) * 100));
   return `
-    <section class="habit-control-card">
+    <section class="habit-control-card content-section section-list">
       <div class="section-title">
-        <h2>快捷补记</h2>
+        <h2>生活习惯</h2>
         <span>${waterPercent}% 饮水</span>
       </div>
       ${habitControl("water", "饮水", `${state.waterMl} / ${state.waterTarget}ml`, waterPercent, "water", "+200ml")}

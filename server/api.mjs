@@ -1,8 +1,11 @@
+import { APP_RELEASE } from "../src/release.js";
+import { handleHistory } from "./history.mjs";
 import { localAuthEnabled, MAX_JSON_BODY_BYTES, REFRESH_COOKIE_NAME } from "./config.mjs";
+import { handleAuthRecovery } from "./auth-recovery.mjs";
 import { baseHeaders, clearRefreshCookieHeader, cookieFromRequest, refreshCookieHeader } from "./http.mjs";
 import { isLocalRefreshToken, localAuthService } from "./local-auth.mjs";
 import { nutritionAiConfigured, requestNutritionEstimate } from "./nutrition.mjs";
-import { assertNutritionOwner, nutritionBudgetStatus } from "./nutrition-budget.mjs";
+import { assertNutritionOwner, nutritionBudgetStatus, personalBudget } from "./nutrition-budget.mjs";
 import { assertWithinRateLimit, clientIp } from "./rate-limit.mjs";
 import {
   assertSupabaseAuthReady,
@@ -89,10 +92,13 @@ export function readJsonBody(request) {
 }
 
 export async function handleApi(request, response, url) {
+  if (await handleAuthRecovery(request, response, url, { readJsonBody, sendJson, sendJsonWithHeaders })) return true;
   if (url.pathname === "/api/health") {
     sendJson(response, 200, {
       ok: true,
       liveness: "ok",
+      release: APP_RELEASE,
+      commit: process.env.RENDER_GIT_COMMIT || null,
       auth: "supabase",
       supabaseConfigured: isSupabaseConfigured(),
       readinessUrl: "/api/readiness",
@@ -133,10 +139,13 @@ export async function handleApi(request, response, url) {
       return true;
     }
     await assertSupabaseAuthReady({ forSignup: true });
-    const data = await requestSupabase("/auth/v1/signup", {
-      method: "POST",
-      body: { email, password },
-    });
+    const data = await requestSupabase(
+      `/auth/v1/signup?redirect_to=${encodeURIComponent(`${process.env.PUBLIC_APP_ORIGIN || (process.env.NODE_ENV === "production" ? "https://male-fat-loss-app-prototype.onrender.com" : `http://${request.headers.host}`)}/?auth=callback`)}`,
+      {
+        method: "POST",
+        body: { email, password },
+      },
+    );
     const headers = data?.refresh_token ? { "Set-Cookie": refreshCookieHeader(data.refresh_token, request) } : {};
     sendJsonWithHeaders(
       response,
@@ -208,6 +217,7 @@ export async function handleApi(request, response, url) {
   }
 
   const auth = await currentUserFromRequest(request);
+  if (await handleHistory(request, response, url, auth, { readJsonBody, sendJson })) return;
 
   if (url.pathname === "/api/auth/user" && request.method === "GET") {
     sendJson(response, 200, { user: auth.user });
@@ -267,7 +277,7 @@ export async function handleApi(request, response, url) {
       // the app_states row. If this admin call fails, the account and its
       // records are both still intact — data must never be destroyed before
       // the step that can fail has succeeded.
-      await deleteSupabaseAccount(auth.user.id);
+      await deleteSupabaseAccount(auth.user.id, auth.accessToken);
     }
     sendJsonWithHeaders(response, 200, { ok: true }, { "Set-Cookie": clearRefreshCookieHeader(request) });
     return true;
@@ -275,7 +285,7 @@ export async function handleApi(request, response, url) {
 
   if (url.pathname === "/api/ai/budget" && request.method === "GET") {
     assertNutritionOwner(auth.user.id);
-    sendJson(response, 200, await nutritionBudgetStatus());
+    sendJson(response, 200, personalBudget(await nutritionBudgetStatus(auth.user.id)));
     return true;
   }
 

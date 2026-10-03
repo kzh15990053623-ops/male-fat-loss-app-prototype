@@ -13,6 +13,8 @@ import {
 } from "./app-state.js";
 import { isPlainRecord } from "./app-utils.js";
 import { migratePayload } from "./app-data.js";
+import { archiveSnapshot } from "./history-store.js";
+import { nativeRuntime } from "./native-runtime.js";
 
 function storageKeyFor(baseKey = STORAGE_KEY, userId = runtime.authUserId) {
   const normalizedUserId = String(userId || "");
@@ -80,7 +82,8 @@ function parseStoredValue(key) {
     const stored = JSON.parse(read.value || "null");
     return isPlainRecord(stored) ? stored : null;
   } catch {
-    safeStorageRemove(key);
+    state.syncErrorKind = "storage";
+    state.syncError = "本机缓存损坏，原文件保留。请联网恢复或导入备份";
     return null;
   }
 }
@@ -176,6 +179,7 @@ function isValidOfflinePayloadEnvelope(value) {
 }
 
 function readStoredPayload({ requireValidOfflineEnvelope = false } = {}) {
+  if (nativeRuntime()) return migratePayload(nativeRuntime().store.latestDevicePayload());
   if (!runtime.authUserId) return null;
   runtime.loadedLegacyStorageKey = "";
   const current = parseStoredValue(storageKeyFor(STORAGE_KEY));
@@ -210,7 +214,25 @@ function readOfflineStoredPayload() {
 }
 
 function writeStoredPayload(payload) {
+  if (nativeRuntime()) {
+    const normalized = { ...payload, localUpdatedAt: typeof payload.localUpdatedAt === "string" ? payload.localUpdatedAt : "" };
+    const pending = nativeRuntime().store.saveDevicePayload(normalized);
+    void pending.catch((error) => {
+      state.syncErrorKind = "storage";
+      state.syncError = error.message || "手机存储写入失败";
+    });
+    return { ok: true, pending };
+  }
   if (!runtime.authUserId) return { ok: true, skipped: true };
+  const existing = safeStorageGet(userStorageKey());
+  if (existing.ok && existing.value) {
+    try {
+      JSON.parse(existing.value);
+    } catch {
+      const preserved = safeStorageSet(`${userStorageKey()}:damaged`, existing.value);
+      if (!preserved.ok) return preserved;
+    }
+  }
   const localUpdatedAt = typeof payload.localUpdatedAt === "string" ? payload.localUpdatedAt : "";
   const write = safeStorageSet(userStorageKey(), JSON.stringify({ ...payload, localUpdatedAt }));
   if (!write.ok) return write;
@@ -218,12 +240,16 @@ function writeStoredPayload(payload) {
     safeStorageRemove(runtime.loadedLegacyStorageKey);
     runtime.loadedLegacyStorageKey = "";
   }
-  return { ok: true };
+  return globalThis.indexedDB ? { ok: true, pending: archiveSnapshot(payload) } : { ok: true };
 }
 
 function storeSession(session) {
   if (runtime.authUserId !== session.user?.id || runtime.authProvider !== normalizedAuthProvider(session.provider)) {
     runtime.authSessionGeneration += 1;
+    runtime.historyRows = [];
+    runtime.historyConflicts = [];
+    runtime.historyBefore = "";
+    runtime.historyPage = 0;
   }
   runtime.accessToken = session.accessToken || "";
   runtime.authUserId = session.user?.id || "";
@@ -243,6 +269,22 @@ function storeSession(session) {
 }
 
 function clearSession() {
+  runtime.historyRows = [];
+  runtime.historyConflicts = [];
+  runtime.historyBefore = "";
+  runtime.historyPage = 0;
+  runtime.recoveryVerified = false;
+  runtime.aiNutritionController?.abort();
+  runtime.aiNutritionController = null;
+  runtime.aiNutritionSequence += 1;
+  runtime.mealPhotoSequence += 1;
+  runtime.mealPhoto = null;
+  runtime.mealPhotoLoading = false;
+  runtime.mealPhotoError = "";
+  runtime.mealPhotoReviewKey = "";
+  runtime.nutritionBudget = null;
+  runtime.nutritionBudgetMessage = "";
+  runtime.nutritionBudgetLoading = false;
   const previousUserId = runtime.authUserId;
   runtime.authSessionGeneration += 1;
   for (const key of ["saveTimer", "inputSaveTimer", "retryTimer"]) {
@@ -268,6 +310,28 @@ function clearLegacyAuthStorage() {
   safeStorageRemove(LEGACY_REFRESH_TOKEN_KEY);
 }
 
+// A tab-local checkpoint prevents upgrade votes from replacing another
+// tab's unsaved draft in the account's shared browser cache.
+function preserveUpgradeDraft() {
+  if (!runtime.authUserId) return true;
+  try {
+    sessionStorage.setItem("wenjian-upgrade-draft", JSON.stringify({ userId: runtime.authUserId, draft: state.mealDraft }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function restoreUpgradeDraft() {
+  try {
+    const item = JSON.parse(sessionStorage.getItem("wenjian-upgrade-draft") || "null");
+    if (item?.userId !== runtime.authUserId || !isPlainRecord(item.draft)) return;
+    state.mealDraft = item.draft;
+    sessionStorage.removeItem("wenjian-upgrade-draft");
+  } catch {
+    /* The account cache is still available. */
+  }
+}
+
 export {
   storageKeyFor,
   userStorageKey,
@@ -286,4 +350,6 @@ export {
   storeSession,
   clearSession,
   clearLegacyAuthStorage,
+  preserveUpgradeDraft,
+  restoreUpgradeDraft,
 };

@@ -1,0 +1,1200 @@
+/* 墨玉东方风 — 稳减APP视觉系统 */
+/* 基于东方美学"静气"理念：宣纸底、墨黑字、原木辅、朱砂点 */
+
+:root {
+  color-scheme: light;
+
+  /* 底色体系：宣纸白 + 原木色 + 浅肌理 */
+  --paper: #faf8f5;
+  --paper-2: #ffffff;
+  --paper-3: #f5f1ec;
+  --paper-texture: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+
+  /* 墨色体系：从浓到淡 */
+  --ink: #1f1f1f;
+  --ink-2: #2d2d2d;
+  --ink-3: #4a4a4a;
+  --ink-4: #6b6b6b;
+  --ink-5: #8a8a8a;
+
+  /* 原木色系：辅助、分隔、温暖感 */
+  --wood: #d4c5b0;
+  --wood-light: #e8e0d5;
+  --wood-dark: #b8a88f;
+
+  /* 朱砂红：品牌强调色，页面识别色单独定义 */
+  --cinnabar: #c75b4a;
+  --cinnabar-deep: #a84a3c;
+  --cinnabar-soft: #f5e6e3;
+  --cinnabar-ghost: rgba(199, 91, 74, 0.08);
+
+  --accent-home: #a84a3c;
+  --accent-diet: #866348;
+  --accent-training: #526d66;
+  --accent-data: #556779;
+  --accent-profile: #625d55;
+  --surface-overview: #f1ece4;
+  --surface-advice: #f4f0e9;
+  --section-border: #d8d2c9;
+  --section-gap: 32px;
+  --section-padding: 20px;
+
+  /* 功能色：低饱和，融入整体 */
+  --signal: #2d5a3d;
+  --signal-soft: #e8f0ea;
+  --orange: #b8723c;
+  --orange-soft: #f5e8dc;
+  --red: #a84038;
+  --red-soft: #f5e0de;
+  --yellow: #8a6b1a;
+  --yellow-soft: #f5efd8;
+
+  /* 接管旧变量：未逐条改造的组件自动继承新配色 */
+  --green: #1f1f1f; /* 原品牌绿 → 墨色 */
+  --muted: #6b6b6b;
+  --muted-2: #8a8a8a;
+  --white: #ffffff;
+  --switch-track-off: #e8e0d5;
+  --focus-ring-soft: rgba(31, 31, 31, 0.1);
+
+  /* 线条：发丝级，若隐若现 */
+  --line: rgba(31, 31, 31, 0.08);
+  --line-strong: rgba(31, 31, 31, 0.15);
+  --line-wood: rgba(212, 197, 176, 0.4);
+
+  /* 阴影：极淡，如宣纸透光 */
+  --shadow-soft: 0 1px 3px rgba(31, 31, 31, 0.04);
+  --shadow-float: 0 4px 20px rgba(31, 31, 31, 0.06);
+  --shadow-lift: 0 8px 32px rgba(31, 31, 31, 0.08);
+
+  /* 圆角：克制，非全圆角 */
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-hero: 16px;
+  --radius-seal: 4px;
+
+  /* 触控目标 */
+  --tap: 44px;
+
+  /* 字体：系统黑体为主，标题可用衬线 */
+  --font-cjk: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+  --font-data: "Barlow", var(--font-cjk);
+
+  /* 字号：宽松呼吸感 */
+  --font-caption: 0.75rem;
+  --font-small: 0.8125rem;
+  --font-body: 0.9375rem;
+  --font-section: 1.125rem;
+  --font-title: 1.875rem;
+  --font-hero: 2.5rem;
+
+  /* 字重 */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* 间距：大量留白 */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* 动效：缓而稳 */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-ink: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 200ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+}
+
+/* 全局基础：宣纸底 + 肌理 */
+html {
+  background: #e8e4de;
+}
+
+body {
+  background: #e8e4de;
+  color: var(--ink);
+  font-family: var(--font-cjk);
+  font-size: var(--font-body);
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+}
+
+/* 手机壳：宣纸质感 */
+.phone-shell {
+  background: var(--paper);
+  background-image: var(--paper-texture);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+/* 应用表面：增加顶部留白呼吸感 */
+.app-surface {
+  padding: calc(28px + env(safe-area-inset-top)) 20px calc(112px + env(safe-area-inset-bottom));
+}
+
+/* 标题：衬线体用于页面大标题 */
+.page-header h1 {
+  font-family: var(--font-serif);
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+/* 眉题：小楷风格 */
+.eyebrow {
+  color: var(--ink-4);
+  font-family: var(--font-cjk);
+  font-size: var(--font-caption);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* 卡片：宣纸卡片 + 发丝边框 */
+.section-block,
+.chart-card,
+.meal-overview-card,
+.week-plan-card,
+.weekly-action-card,
+.guardrail-card,
+.goal-lab-card,
+.recommend-card,
+.habit-control-card,
+.hero-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-2);
+  box-shadow: var(--shadow-soft);
+}
+
+/* 印章式徽章 */
+.streak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--cinnabar);
+  border-radius: var(--radius-seal);
+  color: var(--cinnabar-deep);
+  background: var(--cinnabar-ghost);
+  font-size: var(--font-caption);
+  font-weight: var(--weight-medium);
+}
+
+.streak-badge svg {
+  width: 14px;
+  height: 14px;
+  color: var(--cinnabar-deep);
+}
+
+.streak-badge strong {
+  color: var(--cinnabar-deep);
+  font-family: var(--font-data);
+}
+
+/* 快速记录项：手绘感边框 */
+.focus-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--paper-2);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.focus-item:hover {
+  border-color: var(--wood-dark);
+  box-shadow: var(--shadow-soft);
+}
+
+.focus-item.done {
+  border-color: var(--signal);
+  background: var(--signal-soft);
+}
+
+.focus-item.done .focus-status {
+  color: var(--signal);
+}
+
+/* 进度条：朱砂细线 */
+.weekly-progress-track {
+  height: 2px;
+  background: var(--wood-light);
+  border-radius: 1px;
+}
+
+.weekly-progress-track i {
+  background: var(--cinnabar);
+  border-radius: 1px;
+}
+
+/* 迷你进度条 */
+.mini-progress {
+  height: 3px;
+  background: var(--wood-light);
+  border-radius: 2px;
+}
+
+.mini-progress > span {
+  background: var(--signal);
+  border-radius: 2px;
+}
+
+/* 按钮：墨玉质感 */
+.complete-button {
+  color: var(--paper-2);
+  background: var(--ink);
+  border-radius: var(--radius-control);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.complete-button:hover {
+  background: var(--ink-2);
+  box-shadow: var(--shadow-float);
+}
+
+.primary-small {
+  color: var(--paper-2);
+  background: var(--ink);
+  border-radius: var(--radius-control);
+}
+
+.outline-button {
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  background: transparent;
+  border-radius: var(--radius-control);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.outline-button:hover {
+  border-color: var(--ink);
+  background: var(--paper-3);
+}
+
+/* 图标按钮：宣纸质感 */
+.icon-button,
+.mini-icon-button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--ink-3);
+  background: var(--paper-2);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.icon-button:hover,
+.mini-icon-button:hover {
+  border-color: var(--wood-dark);
+  color: var(--ink);
+  background: var(--paper-3);
+}
+
+/* 底部导航：宣纸底 + 朱砂激活 */
+.bottom-nav {
+  border-top: 1px solid var(--line);
+  background: var(--paper-2);
+  background-image: var(--paper-texture);
+}
+
+.nav-item {
+  color: var(--ink-4);
+  border-radius: var(--radius-control);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.nav-item.active {
+  color: var(--cinnabar-deep);
+  background: var(--cinnabar-ghost);
+}
+
+/* 图表：水墨线条 */
+.line-chart polyline[fill="none"] {
+  stroke: var(--ink-3);
+  stroke-width: 2;
+}
+
+.line-chart circle {
+  stroke: var(--ink-3);
+  fill: var(--paper-2);
+  stroke-width: 2;
+}
+
+.line-chart .chart-area {
+  /* 保留渲染层按图表生成的 fill 引用，避免多个图表引用不存在的同一个 ID。 */
+  opacity: 0.3;
+}
+
+.line-chart stop {
+  stop-color: var(--ink-3);
+}
+
+/* 迷你柱状图：原木色 */
+.mini-bars > span {
+  background: var(--wood);
+  border-radius: 2px 2px 0 0;
+}
+
+.mini-bars > span.negative {
+  background: var(--cinnabar);
+}
+
+/* 完成行动画：朱砂晕染 */
+.completion-row > span {
+  background: linear-gradient(180deg, var(--cinnabar), var(--cinnabar-deep));
+  border-radius: 2px 2px 0 0;
+}
+
+/* 输入框：宣纸质感 */
+input,
+select,
+textarea {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--paper-2);
+  color: var(--ink);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--ink-3);
+  background: var(--paper-2);
+  box-shadow: 0 0 0 3px rgba(31, 31, 31, 0.06);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-5);
+}
+
+/* 开关：木质轨道 */
+.toggle-track {
+  border: 1px solid var(--line-strong);
+  background: var(--wood-light);
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: var(--signal);
+  border-color: var(--signal);
+}
+
+/* 设置面板：宣纸底 */
+.settings-sheet {
+  background: var(--paper);
+  background-image: var(--paper-texture);
+}
+
+.settings-appbar {
+  background: rgba(250, 248, 245, 0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Toast：墨色 */
+.toast-banner {
+  background: rgba(31, 31, 31, 0.92);
+  color: var(--paper-2);
+  border-radius: var(--radius-control);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 确认弹窗：宣纸卡片 */
+.confirm-sheet {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lift);
+}
+
+/* 庆祝弹窗：朱砂点缀 */
+.celebration-card {
+  background: var(--paper-2);
+  border: 1px solid var(--line-wood);
+  box-shadow: var(--shadow-lift);
+}
+
+.celebration-mark {
+  background: var(--cinnabar);
+  color: var(--paper-2);
+}
+
+/* 习惯控制：极简线条 */
+.habit-control {
+  border-top: 1px solid var(--line);
+}
+
+.habit-control:first-of-type {
+  border-top: 0;
+}
+
+.habit-symbol {
+  color: var(--ink-3);
+}
+
+.habit-add-button {
+  color: var(--cinnabar-deep);
+  background: var(--cinnabar-ghost);
+  border: 1px solid var(--cinnabar);
+  border-radius: var(--radius-control);
+}
+
+/* 页面进入动画：更缓 */
+.app-surface.is-tab-entering {
+  animation: page-enter var(--duration-slow) var(--ease-ink) both;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 完成反馈：朱砂呼吸 */
+.focus-item.just-completed {
+  animation: ink-breathe 600ms var(--ease-ink) both;
+}
+
+@keyframes ink-breathe {
+  0% {
+    box-shadow: 0 0 0 0 var(--cinnabar-ghost);
+  }
+  50% {
+    box-shadow: 0 0 0 8px var(--cinnabar-ghost);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* 骨架屏：宣纸质感 */
+.app-skeleton {
+  background: var(--paper);
+}
+
+.app-skeleton span,
+.app-skeleton i,
+.app-skeleton b {
+  background: var(--wood-light);
+}
+
+.skeleton-hero {
+  background: var(--ink);
+}
+
+.skeleton-hero span {
+  background: rgba(250, 248, 245, 0.2);
+}
+
+.skeleton-hero i {
+  background: rgba(250, 248, 245, 0.35);
+}
+
+.skeleton-hero b {
+  background: rgba(199, 91, 74, 0.3);
+}
+
+/* 空状态：极简 */
+.empty-state {
+  background: var(--paper);
+  border: 1px dashed var(--line-strong);
+}
+
+.empty-state svg {
+  color: var(--wood-dark);
+}
+
+/* 营养结果：墨底白字 */
+.nutrition-result {
+  background: var(--ink);
+  color: var(--paper-2);
+  border-radius: var(--radius-card);
+}
+
+.nutrition-result.needs-review {
+  border-left: 3px solid var(--cinnabar);
+}
+
+/* 餐食卡片：发丝分隔 */
+.meal-card {
+  border-bottom: 1px solid var(--line);
+}
+
+.meal-card:first-child {
+  border-top: 1px solid var(--line);
+}
+
+/* 训练轨道：墨色 */
+.training-orbit {
+  border-right: 1px solid var(--line);
+}
+
+.training-orbit span {
+  color: var(--ink);
+}
+
+/* 活动图标：原木底 */
+.activity-icon {
+  background: var(--wood-light);
+  color: var(--ink-3);
+  border-radius: var(--radius-control);
+}
+
+/* 周计划：今日标记 */
+.week-plan-item.today > span,
+.week-plan-item.today strong {
+  color: var(--cinnabar-deep);
+}
+
+.week-plan-item.today::after {
+  background: var(--cinnabar);
+  box-shadow: 0 0 0 3px var(--cinnabar-ghost);
+}
+
+/* 个人资料印章 */
+.profile-stamp {
+  background: var(--cinnabar-deep);
+  color: var(--paper-2);
+  border-radius: var(--radius-seal);
+}
+
+/* 目标页脚：发丝分隔 */
+.goal-footer {
+  border-top: 1px solid var(--line);
+}
+
+/* 警示条：原木色左边框 */
+.medical-note {
+  border-left: 2px solid var(--wood-dark);
+  padding-left: var(--space-3);
+}
+
+/* 宏量标签：木质底 */
+.macro-tags span {
+  background: var(--wood-light);
+  color: var(--ink-3);
+  border-radius: var(--radius-seal);
+}
+
+/* 模板芯片：发丝边框 */
+.template-chip {
+  border-bottom: 1px solid var(--line);
+}
+
+/* 旧文件硬编码颜色的接管 */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline-color: rgba(31, 31, 31, 0.35);
+}
+
+.composer-head .eyebrow {
+  color: var(--ink-4);
+}
+
+.nutrition-result-head > div > span {
+  color: var(--wood);
+}
+
+.undo-banner button {
+  color: var(--paper-3);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.inline-progress {
+  background: var(--wood-light);
+}
+
+.mini-bars {
+  background: repeating-linear-gradient(to top, transparent 0 31px, var(--line) 32px);
+}
+
+.focus-symbol {
+  color: var(--cinnabar);
+}
+
+.chart-point-button:hover::after,
+.chart-point-button:focus-visible::after,
+.chart-point-button.is-selected::after {
+  box-shadow: 0 0 0 5px rgba(45, 90, 61, 0.16);
+}
+
+.auth-service-notice.is-ready {
+  border-color: rgba(45, 90, 61, 0.3);
+  color: var(--signal);
+  background: var(--signal-soft);
+}
+
+.settings-scrim,
+.celebration-scrim {
+  background: rgba(31, 31, 31, 0.5);
+}
+
+.settings-actions {
+  background: linear-gradient(180deg, rgba(250, 248, 245, 0), var(--paper) 24%);
+}
+
+/* 旧色残留清理：阴影/边框里的绿与深蓝 */
+.toggle-track {
+  border-color: var(--line-strong);
+  box-shadow: inset 0 1px 3px rgba(31, 31, 31, 0.08);
+}
+
+.toggle-track::after {
+  box-shadow: 0 2px 5px rgba(31, 31, 31, 0.14);
+}
+
+.toggle-switch input:checked + .toggle-track {
+  border-color: var(--signal);
+  background-color: var(--signal);
+  box-shadow: inset 0 1px 3px rgba(31, 31, 31, 0.12);
+}
+
+.toggle-switch input:focus-visible + .toggle-track {
+  border-color: var(--ink-3);
+  box-shadow:
+    0 0 0 3px var(--focus-ring-soft),
+    inset 0 1px 3px rgba(31, 31, 31, 0.08);
+  outline-color: rgba(31, 31, 31, 0.35);
+}
+
+.profile-status {
+  border-color: rgba(45, 90, 61, 0.3);
+}
+
+.auth-service-indicator {
+  box-shadow: 0 0 0 4px rgba(45, 90, 61, 0.13);
+}
+
+.auth-service-notice.is-checking .auth-service-indicator {
+  box-shadow: 0 0 0 4px rgba(138, 107, 26, 0.12);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--ink-3);
+  background: var(--paper-2);
+  box-shadow: 0 0 0 3px rgba(31, 31, 31, 0.06);
+}
+
+.skeleton-brand span {
+  background: var(--wood-light);
+}
+
+/* 页面身份：与导航、首页快捷入口使用同一组色值。 */
+.app-surface[data-page="home"],
+.nav-item[data-tab="home"] {
+  --page-accent: var(--accent-home);
+  --page-tint: var(--cinnabar-ghost);
+}
+
+.app-surface[data-page="diet"],
+.nav-item[data-tab="diet"],
+.focus-item[data-domain="diet"] {
+  --page-accent: var(--accent-diet);
+  --page-tint: #f3ece5;
+}
+
+.app-surface[data-page="training"],
+.nav-item[data-tab="training"],
+.focus-item[data-domain="training"] {
+  --page-accent: var(--accent-training);
+  --page-tint: #eaf0ed;
+}
+
+.app-surface[data-page="data"],
+.nav-item[data-tab="data"] {
+  --page-accent: var(--accent-data);
+  --page-tint: #ecf0f4;
+}
+
+.app-surface[data-page="profile"],
+.nav-item[data-tab="profile"] {
+  --page-accent: var(--accent-profile);
+  --page-tint: #eeeae5;
+}
+
+.app-surface[data-page] {
+  --font-caption: 0.8125rem;
+  --muted-2: #726d66;
+}
+
+.app-surface .page-header > div:first-child {
+  min-width: 0;
+}
+
+.page-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-symbol {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--page-accent);
+}
+
+.page-symbol svg {
+  width: 22px;
+  height: 22px;
+}
+
+.nav-item.active {
+  color: var(--page-accent);
+  background: var(--page-tint);
+}
+
+.nav-item.active::after {
+  position: absolute;
+  bottom: 1px;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+  content: "";
+}
+
+/* 完整定义分区容器，避免旧样式的零内边距与新边框叠加。 */
+.app-surface .content-section {
+  min-width: 0;
+  margin-top: var(--section-gap);
+  border: 1px solid var(--section-border);
+  border-radius: var(--radius-card);
+  padding: var(--section-padding);
+  background: var(--paper-2);
+  box-shadow: none;
+}
+
+.app-surface .page-header + .content-section {
+  margin-top: 0;
+}
+
+.app-surface .section-overview {
+  background: var(--surface-overview);
+}
+
+.app-surface .section-advice {
+  border-left: 3px solid var(--page-accent);
+  background: var(--surface-advice);
+}
+
+.content-section > .section-title {
+  margin-bottom: 16px;
+}
+
+.content-section h2 {
+  margin-top: 0;
+  font-size: var(--font-section);
+  line-height: 1.45;
+  font-weight: var(--weight-semibold);
+}
+
+.content-section .section-title {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+}
+
+.section-form > .section-title h2::before,
+.section-list > .section-title h2::before,
+.section-chart > .section-title h2::before {
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  margin-right: 8px;
+  background: var(--page-accent);
+  content: "";
+}
+
+.subsection-title,
+.content-section .section-title h3 {
+  margin: 0;
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+}
+
+.content-section :is(input, select, textarea) {
+  border-color: var(--section-border);
+}
+
+.content-section :is(input, textarea)::placeholder {
+  color: var(--muted);
+}
+
+/* 首页：概览、快速操作、习惯、趋势与建议。 */
+.lab-hero .section-title {
+  margin-bottom: 8px;
+}
+
+.focus-board .weekly-progress {
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.lab-hero .home-budget-strip {
+  padding-bottom: 0;
+}
+
+.lab-hero .energy-budget {
+  margin-top: 8px;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 8px;
+}
+
+.lab-hero .hero-measure strong {
+  font-size: 2.75rem;
+}
+
+.lab-hero .hero-waist strong {
+  font-size: 1.875rem;
+}
+
+.app-surface .quick-capture-panel {
+  margin-top: 16px;
+}
+
+.meal-overview-card .energy-budget {
+  margin-bottom: 16px;
+}
+
+.focus-board .section-title {
+  margin-bottom: 8px;
+}
+
+.focus-board .focus-list {
+  gap: 0;
+  margin-top: 0;
+}
+
+.focus-board .focus-item {
+  min-height: 100px;
+  border: 0;
+  border-radius: 0;
+  padding: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.focus-board .focus-item + .focus-item {
+  border-left: 1px solid var(--line-strong);
+}
+
+.focus-board .focus-item:hover {
+  background: var(--paper-3);
+}
+
+.focus-board .focus-symbol {
+  color: var(--page-accent);
+}
+
+.focus-board .focus-status {
+  top: 8px;
+  right: 4px;
+}
+
+.focus-board .focus-item.done .focus-status {
+  color: var(--signal);
+}
+
+.quick-weight-card {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 20px;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 16px;
+  gap: 12px;
+}
+
+.quick-weight-card :is(.subsection-title, .primary-small) {
+  grid-column: 1 / -1;
+}
+
+.habit-control-card .habit-control {
+  padding: 16px 0;
+}
+
+.habit-control-card .habit-control:last-child {
+  padding-bottom: 0;
+}
+
+.habit-control-card .habit-add-button {
+  border-color: var(--section-border);
+  color: var(--ink);
+  background: var(--paper-2);
+}
+
+.app-surface .home-trend-card {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.home-trend-card .section-title {
+  display: flex;
+}
+
+.home-trend-card > div > strong {
+  margin-top: 12px;
+}
+
+.app-surface .home-trend-card.trend-empty {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.coach-card .coach-details {
+  border-top: 1px solid var(--line-strong);
+  padding-top: 8px;
+}
+
+/* 饮食：表单内部的输入、核对、保存，与今日汇总各有边界。 */
+.composer-group {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.composer-group > .subsection-title {
+  margin-bottom: 12px;
+}
+
+.meal-composer .ai-orb {
+  color: var(--page-accent);
+  background: var(--page-tint);
+}
+
+.meal-composer .composer-actions {
+  margin-top: 20px;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 16px;
+}
+
+.composer-group .advanced-fields {
+  margin-top: 12px;
+  border-top: 0;
+}
+
+.meal-overview-card .meal-overview-stats {
+  gap: 16px;
+  margin: 0 0 16px;
+  background: transparent;
+  border-radius: 0;
+}
+
+.meal-overview-stats article {
+  padding: 0;
+  background: transparent;
+}
+
+.meal-overview-card .meal-overview-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.meal-overview-grid::before,
+.meal-overview-item::before {
+  content: none;
+}
+
+.meal-overview-item {
+  min-width: 0;
+  padding: 10px 0;
+}
+
+.meal-overview-item:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.meal-overview-card .nutrition-strip {
+  margin-top: 12px;
+  border: 0;
+  border-top: 1px solid var(--line-strong);
+  border-radius: 0;
+  padding-top: 16px;
+  background: transparent;
+  overflow: visible;
+  gap: 8px;
+}
+
+.nutrition-strip > div,
+.data-command-strip > article {
+  padding: 0;
+  background: transparent;
+}
+
+.nutrition-strip strong small {
+  display: block;
+  margin-left: 0;
+}
+
+.context-lab > summary {
+  min-height: var(--tap);
+}
+
+.context-lab .plate-guide-card {
+  padding-bottom: 0;
+}
+
+.context-lab .scenario-tabs button {
+  border-radius: var(--radius-control);
+}
+
+.context-lab .scenario-tabs button.active {
+  border-color: var(--page-accent);
+  background: var(--page-accent);
+}
+
+.section-list :is(.template-chip, .meal-card):last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* 训练：表单用白底，计划中的今天用色条及文字双重标记。 */
+.activity-capture > summary {
+  min-height: var(--tap);
+  flex-wrap: wrap;
+  padding: 0;
+}
+
+.activity-capture .activity-form-card {
+  border-top: 1px solid var(--line-strong);
+  margin-top: 16px;
+  padding: 16px 0 0;
+}
+
+.week-plan-item.today {
+  border-left: 3px solid var(--page-accent);
+  padding-left: 8px;
+  background: var(--page-tint);
+}
+
+.week-plan-item.today > span,
+.week-plan-item.today strong {
+  color: var(--page-accent);
+}
+
+.week-plan-item.today::after {
+  background: var(--page-accent);
+  box-shadow: none;
+}
+
+.today-label {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: var(--font-caption);
+  font-weight: var(--weight-medium);
+}
+
+/* 数据：图形与说明分开成组，图表沿用各自的渐变 ID。 */
+.app-surface .line-chart polyline[fill="none"],
+.app-surface .line-chart circle {
+  stroke: var(--page-accent);
+}
+
+.app-surface .line-chart stop {
+  stop-color: var(--page-accent);
+}
+
+.app-surface .two-chart-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--section-gap);
+  margin-top: var(--section-gap);
+}
+
+.app-surface .two-chart-grid .content-section {
+  margin-top: 0;
+}
+
+.app-surface[data-page="data"] .mini-bars > span:not(.negative),
+.app-surface[data-page="data"] .completion-row > span {
+  background: var(--page-accent);
+}
+
+.app-surface .data-command-strip {
+  gap: 12px;
+}
+
+/* 我的：身体指标归入概览，危险操作与日常管理保持间距。 */
+.profile-overview .profile-metrics-lab {
+  gap: 0;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.profile-overview .stat-card {
+  min-height: 96px;
+  padding: 12px 0;
+  background: transparent;
+}
+
+.profile-overview .stat-card:nth-child(even) {
+  border-left: 1px solid var(--line-strong);
+  padding-left: 16px;
+}
+
+.profile-overview .stat-card:nth-child(n + 3) {
+  border-top: 1px solid var(--line-strong);
+}
+
+.data-danger-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 16px;
+}
+
+/* 响应式调整 */
+@media (max-width: 359px) {
+  .app-surface {
+    --section-padding: 16px;
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .page-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .page-header-side {
+    margin-left: auto;
+  }
+
+  .focus-board .focus-item {
+    min-height: 94px;
+    padding: 8px 4px;
+  }
+
+  .content-section .habit-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .section-overview .home-budget-strip strong small {
+    display: block;
+    margin: 3px 0 0;
+  }
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .app-surface.is-tab-entering {
+    animation: none;
+  }
+
+  .focus-item.just-completed {
+    animation: none;
+  }
+}

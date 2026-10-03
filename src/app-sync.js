@@ -1,4 +1,7 @@
+import { archiveSnapshot, clearHistory, flushHistoryEdits } from "./history-store.js";
 import { state, meals, runtime, API_STATE_URL, API_AUTH_REFRESH_URL, CURRENT_SCHEMA_VERSION } from "./app-state.js";
+import { nativeRuntime, nativeCloudEnabled, apiFetch } from "./native-runtime.js";
+import { expireNativeSession } from "./native-cloud.js";
 import { isPlainRecord, timestampMs } from "./app-utils.js";
 import { backendStatusText } from "./app-logic.js";
 import {
@@ -18,6 +21,7 @@ import {
 } from "./app-data.js";
 import {
   userStorageKey,
+  restoreUpgradeDraft,
   safeStorageRemove,
   readStoredPayload,
   readOfflineStoredPayload,
@@ -34,6 +38,7 @@ function setSyncFeedbackHandler(handler) {
 }
 
 function applyPersistedData(rawStored) {
+  const transientDraft = state.mealDraft;
   const stored = migratePayload(rawStored);
   if (!stored) return;
   if (stored.state) {
@@ -66,6 +71,27 @@ function applyPersistedData(rawStored) {
     state.toast = "";
     state.authError = "";
     state.setupFieldErrors = {};
+    // A sync acknowledgement must not erase an in-progress photo review. Only
+    // retain the transient result when all editable draft values still match.
+    const draftFields = [
+      "date",
+      "editingId",
+      "slot",
+      "food",
+      "amount",
+      "unit",
+      "cooking",
+      "oilGrams",
+      "sauce",
+      "calories",
+      "protein",
+      "carbs",
+      "fat",
+    ];
+    if (transientDraft && draftFields.every((key) => transientDraft[key] === state.mealDraft[key])) {
+      for (const key of ["aiResult", "aiStatus", "aiError", "aiErrorCode", "aiRequestId", "aiRetryable"])
+        state.mealDraft[key] = transientDraft[key];
+    }
   }
   if (Array.isArray(stored.meals)) meals.splice(0, meals.length, ...normalizeMealList(stored.meals, meals));
   hydrateTodayFromRecords();
@@ -114,6 +140,7 @@ function adoptRemoteClear(rawData) {
   // metadata. If marker persistence fails, the in-memory state still stays
   // blank and the next server load will attempt the wipe again.
   safeStorageRemove(userStorageKey());
+  void clearHistory();
   resetAppData({ blank: true, revision, localUpdatedAt: updatedAt });
   runtime.syncBasePayload = syncBaseSnapshot(rawData);
   state.clearedAt = clearedAt;
@@ -137,7 +164,8 @@ function loadStoredState(rawStored) {
   runtime.dirtyBaseRevision = stored.dirtyBaseRevision;
   runtime.syncBasePayload = stored.syncBase || (stored.dirtyBaseRevision === null ? syncBaseSnapshot(stored) : null);
   applyPersistedData(stored);
-  writeStoredPayload(storedPayload());
+  restoreUpgradeDraft();
+  if (!nativeRuntime()) writeStoredPayload(storedPayload());
   return stored;
 }
 
@@ -183,10 +211,10 @@ async function loadServerStateRound({ retried = false } = {}) {
   const sessionChanged = () => userId !== runtime.authUserId || generation !== runtime.authSessionGeneration;
   try {
     if (!runtime.accessToken) {
-      state.authRequired = !isTrustedOfflineSession();
+      state.authRequired = !nativeRuntime() && !isTrustedOfflineSession();
       return false;
     }
-    const response = await fetch(API_STATE_URL, { cache: "no-store", headers: authHeaders() });
+    const response = await apiFetch(API_STATE_URL, { cache: "no-store", headers: authHeaders() });
     if (sessionChanged()) return false;
     if (response.status === 401) {
       if (!retried) {
@@ -199,8 +227,11 @@ async function loadServerStateRound({ retried = false } = {}) {
           return false;
         }
       }
-      state.authRequired = true;
-      clearSession();
+      if (nativeRuntime()) expireNativeSession();
+      else {
+        state.authRequired = true;
+        clearSession();
+      }
       return false;
     }
     if (!response.ok) {
@@ -214,6 +245,8 @@ async function loadServerStateRound({ retried = false } = {}) {
     // Edits can arrive while the GET is in flight. Persist their draft before
     // taking the local merge input; the reconnect gate prevents an early PUT.
     flushPendingInputSave();
+    if (nativeRuntime()) await nativeRuntime().store.flushDeviceStore();
+    if (sessionChanged()) return false;
     const data = migratePayload(rawData) || rawData;
     runtime.stateRevision = payloadRevisionOf(rawData);
     const localPayload = readStoredPayload();
@@ -329,6 +362,7 @@ function finishRefreshSession(outcome, detailed) {
 }
 
 async function refreshSession({ detailed = false } = {}) {
+  if (nativeRuntime()) return nativeRuntime().cloud?.refresh({ detailed }) || false;
   const expectedUserId = runtime.authUserId;
   const expectedProvider = runtime.authProvider;
   const generation = runtime.authSessionGeneration;
@@ -463,7 +497,7 @@ function stateWriteAcknowledgement(data) {
 }
 
 async function putStatePayload(payload, checkSession) {
-  let response = await fetch(API_STATE_URL, {
+  let response = await apiFetch(API_STATE_URL, {
     method: "PUT",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -473,7 +507,7 @@ async function putStatePayload(payload, checkSession) {
     const refreshed = await refreshSession();
     checkSession();
     if (refreshed) {
-      response = await fetch(API_STATE_URL, {
+      response = await apiFetch(API_STATE_URL, {
         method: "PUT",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
@@ -503,6 +537,7 @@ async function writeStateRound(checkSession) {
     response = await putStatePayload(payload, checkSession);
   }
   if (!response.ok) {
+    runtime.syncRequestId = response.headers.get("x-request-id") || "";
     const error = new Error(response.status === 409 ? "云端记录再次发生冲突，请稍后重试" : "同步失败");
     error.kind = response.status === 401 ? "auth" : "server";
     throw error;
@@ -550,7 +585,32 @@ function rebasePendingLocalChanges(round) {
   return true;
 }
 
-async function syncStateNow({ silent = true } = {}) {
+async function syncStateNow({ silent = true, localOnly = false } = {}) {
+  if (nativeRuntime()) {
+    flushPendingInputSave();
+    try {
+      if (state.syncErrorKind === "storage") await nativeRuntime().store.saveDevicePayload(storedPayload());
+      else await nativeRuntime().store.flushDeviceStore();
+      if (localOnly || !nativeCloudEnabled()) {
+        if (!nativeCloudEnabled()) {
+          state.syncPending = false;
+          state.syncError = "";
+          state.syncErrorKind = "none";
+          setBackendStatus("device");
+        }
+        if (!silent) syncFeedbackHandler("已保存到手机");
+        return true;
+      }
+    } catch (error) {
+      state.syncPending = true;
+      state.syncErrorKind = "storage";
+      state.syncError = error.message || "手机存储写入失败";
+      setBackendStatus("offline");
+      if (!silent) syncFeedbackHandler("保存失败，请重试");
+      return false;
+    }
+    if (!runtime.accessToken || runtime.offlineSyncReadRequired) return nativeRuntime().cloud.resume({ silent });
+  }
   if (runtime.syncPromise) return runtime.syncPromise;
   const checkSession = captureSyncSessionGuard();
   if (clearMarkerOf(persistedPayload())) {
@@ -560,15 +620,37 @@ async function syncStateNow({ silent = true } = {}) {
   }
   runtime.syncPromise = (async () => {
     const initialLocalWrite = writeStoredPayload(storedPayload());
-    const locallySaved = initialLocalWrite.ok;
+    let locallySaved = initialLocalWrite.ok;
     state.syncPending = true;
 
-    if (!runtime.accessToken || runtime.offlineSyncReadRequired) {
+    if (initialLocalWrite.pending) {
+      try {
+        await initialLocalWrite.pending;
+      } catch (error) {
+        state.syncErrorKind = "storage";
+        state.syncError = error.message || "历史归档失败";
+        return false;
+      }
+    }
+    if (localOnly || !runtime.accessToken || runtime.offlineSyncReadRequired) {
       if (!locallySaved && !initialLocalWrite.skipped) setBackendStatus("offline");
       return locallySaved;
     }
+    const creatingAccountState = runtime.stateRevision === 0;
     setBackendStatus("saving");
     try {
+      if (!creatingAccountState) await flushHistoryEdits();
+      checkSession();
+      if (initialLocalWrite.pending) {
+        try {
+          await initialLocalWrite.pending;
+        } catch (error) {
+          locallySaved = false;
+          error.kind = "storage";
+          throw error;
+        }
+      }
+      checkSession();
       let acknowledgement;
       let remoteClearAdopted = false;
       while (true) {
@@ -592,11 +674,22 @@ async function syncStateNow({ silent = true } = {}) {
         state.syncPending = true;
         writeStoredPayload(storedPayload());
       }
+      checkSession();
+      if (creatingAccountState && (await flushHistoryEdits())) {
+        runtime.dirtyBaseRevision = acknowledgement.revision;
+        state.syncPending = true;
+        setBackendStatus("local");
+        scheduleSyncRetry({ delay: 0 });
+        return false;
+      }
+      checkSession();
       runtime.localUpdatedAt = acknowledgement.updatedAt;
       state.lastSyncedAt = acknowledgement.updatedAt;
       state.syncPending = false;
       runtime.dirtyBaseRevision = null;
       const finalLocalWrite = writeStoredPayload(storedPayload());
+      if (finalLocalWrite.pending) await finalLocalWrite.pending;
+      checkSession();
       if (finalLocalWrite.ok) {
         state.syncError = "";
         state.syncErrorKind = "none";
@@ -645,6 +738,13 @@ async function syncStateNow({ silent = true } = {}) {
 
 function scheduleSyncRetry({ silent = true, delay = 2500 } = {}) {
   clearTimeout(runtime.retryTimer);
+  if (nativeRuntime()) {
+    if (!nativeCloudEnabled() || navigator.onLine === false) return;
+    const cloud = nativeRuntime().cloud;
+    cloud.retryDelay = Math.min(60000, Math.max(5000, (cloud.retryDelay || 2500) * 2));
+    runtime.retryTimer = setTimeout(() => void cloud.resume({ silent }), Math.max(delay, cloud.retryDelay));
+    return;
+  }
   if (!runtime.accessToken || runtime.offlineSyncReadRequired) return;
   runtime.retryTimer = setTimeout(() => {
     if (!state.syncPending && state.backendStatus !== "local") return;
@@ -655,11 +755,39 @@ function scheduleSyncRetry({ silent = true, delay = 2500 } = {}) {
 function saveStoredState() {
   clearTimeout(runtime.inputSaveTimer);
   runtime.inputSaveTimer = undefined;
+  const archived = archiveSnapshot({ state });
+  void archived.catch((error) => {
+    state.syncErrorKind = "storage";
+    state.syncError = error.message || "历史归档失败，请导出当前记录";
+  });
   const payload = prepareLocalMutation();
   if (!runtime.lastMutationChanged) return true;
   const localWrite = writeStoredPayload(payload);
   state.syncPending = true;
   clearTimeout(runtime.saveTimer);
+  if (nativeRuntime()) {
+    setBackendStatus("saving");
+    const savedRevision = runtime.localMutationRevision;
+    const savedGeneration = runtime.authSessionGeneration;
+    void localWrite.pending.then(
+      () => {
+        if (runtime.localMutationRevision !== savedRevision || runtime.authSessionGeneration !== savedGeneration) return;
+        state.syncPending = nativeCloudEnabled();
+        state.syncError = "";
+        state.syncErrorKind = "none";
+        setBackendStatus(nativeCloudEnabled() ? "local" : "device");
+        if (nativeCloudEnabled()) runtime.saveTimer = setTimeout(() => void nativeRuntime().cloud.resume(), 600);
+      },
+      (error) => {
+        if (runtime.authSessionGeneration !== savedGeneration) return;
+        state.syncPending = true;
+        state.syncErrorKind = "storage";
+        state.syncError = error.message || "手机存储写入失败";
+        setBackendStatus("offline");
+      },
+    );
+    return true;
+  }
   if (!localWrite.ok && !localWrite.skipped) setBackendStatus("offline");
   if (!runtime.accessToken || runtime.offlineSyncReadRequired) return localWrite.ok;
   if (!runtime.syncPromise) runtime.saveTimer = setTimeout(() => syncStateNow(), 250);

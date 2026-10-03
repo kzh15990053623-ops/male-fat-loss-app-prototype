@@ -34,8 +34,25 @@ async function boundedJson(request) {
 
 function validOperation(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
-  if (Object.keys(body).some((key) => !["p_action", "p_request_id", "p_limit", "p_usage"].includes(key))) return false;
+  if (
+    Object.keys(body).some(
+      (key) => !["p_action", "p_request_id", "p_limit", "p_usage", "p_user_id", "p_monthly_limit", "p_daily_limit"].includes(key),
+    )
+  )
+    return false;
   if (!["status", "reserve", "report"].includes(body.p_action)) return false;
+  if (
+    body.p_user_id !== undefined &&
+    (!UUID.test(body.p_user_id) ||
+      !Number.isInteger(body.p_monthly_limit) ||
+      body.p_monthly_limit < 1 ||
+      body.p_monthly_limit > 20 ||
+      !Number.isInteger(body.p_daily_limit) ||
+      body.p_daily_limit < 1 ||
+      body.p_daily_limit > 5)
+  )
+    return false;
+  if (body.p_user_id === undefined && (body.p_monthly_limit !== undefined || body.p_daily_limit !== undefined)) return false;
   if (!Number.isSafeInteger(body.p_limit) || body.p_limit < 0 || body.p_limit > 100_000_000) return false;
   if (body.p_action === "status" ? body.p_request_id !== null : !UUID.test(body.p_request_id)) return false;
   if (body.p_action !== "report") return body.p_usage === null;
@@ -84,7 +101,7 @@ export function createBudgetGateway({ url, apiKey, fetchImpl = fetch }) {
         return json({ code: "INVALID_BUDGET_OPERATION" }, 400);
       }
       if (!validOperation(body)) return json({ code: "INVALID_BUDGET_OPERATION" }, 400);
-      const result = await fetchImpl(`${url}/rest/v1/rpc/nutrition_budget`, {
+      const result = await fetchImpl(`${url}/rest/v1/rpc/${body.p_user_id ? "nutrition_budget_for_user" : "nutrition_budget"}`, {
         method: "POST",
         headers,
         signal: AbortSignal.timeout(5000),

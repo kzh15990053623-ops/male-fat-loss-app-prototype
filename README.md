@@ -1,5 +1,9 @@
 # 稳减 · 私人健康手账
 
+最新产品实施与内测准入记录见 [成熟产品实施记录](docs/maturity-implementation-20261004.md)。发布候选 `20261004-maturity-1`；真实邮件和实体手机验收尚未完成。
+
+安卓独立安装版的构建、备份和验收说明见 [docs/android-app.md](docs/android-app.md)。
+
 这是一个面向手机尺寸的减脂与健康管理 PWA，包含首页、饮食、训练、数据、我的五个页面。当前版本使用渐进式 ES Module + Node 静态服务，并接入 Supabase 邮箱登录与多用户数据隔离。
 
 ## 现在已经做好了什么
@@ -129,7 +133,8 @@ npm run supabase:db:push
 - `GET /api/state`：读取当前用户 App 状态及当前 `revision`。
 - `PUT /api/state`：保存当前用户 App 状态（兼容 `POST`）。写入必须携带显式非负整数 `revision`；缺失或过期版本返回 409 并携当前冲突载荷，非法版本返回 400，成功响应包含新 `revision` 与 `updatedAt`。
 - `DELETE /api/state`：不支持，固定返回 405。应用内“清空全部记录”使用带 `clearedAt` 与 `revision` 的 PUT 墓碑；遇到 409 时仅以同一请求 marker 和服务端新版本重试一次，最终 `clearedAt` 由服务端统一生成并与 `updatedAt` 相同。本机只保留无健康数据的 marker，离线时拒绝清空，避免旧设备或时钟偏差复活已清空数据。
-- `POST /api/ai/nutrition`：真实模型营养识别代理，需要登录后使用。请求为 `{ foodText, context, locale: "zh-CN" }`；失败统一返回 `{ error, code, retryable, requestId }`。
+- `POST /api/ai/nutrition`：真实模型营养识别代理，需要登录后使用。请求为 `{ foodText, context, locale: "zh-CN", imageDataUrl? }`；照片为浏览器压缩后的 JPEG data URL，可仅传照片而不填文字。失败统一返回 `{ error, code, retryable, requestId }`。
+- `GET /api/ai/budget`：读取个人 AI 月度预算占用、费用估算与剩余次数，需要登录且通过个人账号校验。
 
 成功响应包含 `requestId`、`source: "model"`、`model`、`confidence`、`needsReview`、三大营养、食物明细、`assumptions[]` 与 `warnings[]`。保存记录时会写入 `nutritionSource`，并标记 AI 结果是否被用户修改。
 
@@ -148,17 +153,31 @@ npm run supabase:db:push
 
 ## 配置真实 AI 营养服务
 
-服务端支持 OpenAI-compatible Chat Completions 协议，也支持返回约定营养结构的内部网关。前端不会读取模型密钥。
+个人拍照识别使用 DeepSeek Flash，支持拍照、相册和纯文字。照片在浏览器内压缩为最长边 1280 像素、512 KB 以内的 JPEG，并移除 EXIF；仅点击识别后发送给 DeepSeek。本应用不把照片写入本机缓存、数据库或导出文件，刷新后需要重新选择。图片仍会经过模型服务商，保留策略以其政策为准。照片结果必须勾选核对后保存，修改食物或营养数值后需要重新核对。
 
 ```text
-NUTRITION_AI_ENDPOINT=https://你的模型网关/v1/chat/completions
+NUTRITION_AI_ENDPOINT=https://api.deepseek.com/chat/completions
 NUTRITION_AI_API_KEY=仅保存在服务端的密钥
-NUTRITION_AI_MODEL=模型名称
-NUTRITION_AI_PROTOCOL=openai-compatible
-NUTRITION_AI_TIMEOUT_MS=15000
+NUTRITION_AI_MODEL=deepseek-flash
+NUTRITION_AI_PROTOCOL=deepseek
+NUTRITION_AI_TIMEOUT_MS=30000
+NUTRITION_AI_ALLOWED_USER_ID=你的Supabase用户UUID
+NUTRITION_AI_MONTHLY_BUDGET_CNY=100
 ```
 
-如果你的内部网关直接接收 `{ foodText, context, locale, model }` 并返回约定结构，将 `NUTRITION_AI_PROTOCOL` 设置为 `contract`。未配置模型服务时，接口返回 `AI_PROVIDER_NOT_CONFIGURED`，不会降级为本地规则估算。
+本机先个人试用时，只需把密钥填入项目根目录被 Git 忽略的 `.env`，再运行 `npm run dev`；本机预算保存在 `data/nutrition-budget.json`，无需执行 Supabase 预算迁移，也无需配置 service-role key。此时 `NUTRITION_AI_ALLOWED_USER_ID` 可留空。不要把密钥发到聊天或提交到代码仓库。
+
+上线前还需执行 `supabase/migrations/202609210001_nutrition_budget.sql`，并在服务端设置 `SUPABASE_SERVICE_ROLE_KEY`。账本由仅 service-role 可调用的 RPC 维护，浏览器账号无读写权限。生产环境必须配置允许使用 AI 的用户 UUID；其他账号不能消耗预算。账本不可用时停止调用，绝不回退到内存计数。注意，现有账号删除功能也会因配置 service-role key 而启用。
+
+预算按北京时间自然月统计，整个服务共享，上限 100 元，可通过配置降低。每次实际请求前原子预留 **0.10 元**，最多 1000 次/月；超时、网络失败、取消及格式错误也保留预留额，不自动重试。缓存命中不新增额度。保守预留额不会因成功回报而退还，以覆盖无法确认的上游费用；这会比实际账单更早停止调用。另记录上游返回的输入/输出 token，用高峰未命中价格计算估算金额（输入 2 元/百万、输出 8 元/百万，核对日期 2026-09-21），与预算占用分别展示。若上游回报的费用超出单次预留，暂停当月后续请求。该限制仅覆盖本项目调用，不包含同一 API 账户在其他应用的消费或托管费用。
+
+DeepSeek 路径限定官方端点和 `deepseek-flash`，关闭思考，最多输出 2048 token；限制文字长度、上下文字段和单张图片。模型价格改变时需先复核单次预留和估算费率。实际账单以 DeepSeek 为准，首次真实餐食测试仍需核对返回 usage、账单和识别质量。
+
+本地开发账本默认在 `data/nutrition-budget.json`（可用 `NUTRITION_AI_BUDGET_PATH` 改路径），有进程间文件锁及写入同步；不要删除账本来恢复额度。崩溃残留 `.lock` 时，先确认没有服务进程，再仅删除锁文件，保留账本。线上总是使用 Supabase，重启或重新部署不会清零预算。`GET /api/ai/budget` 登录且通过个人账号校验后返回用量。
+
+原有纯文字网关仍可使用 `openai-compatible`；内部网关接收 `{ foodText, context, locale, model }` 时使用 `contract`。这两个兼容模式不支持照片，也不包含 DeepSeek 专用预算控制。未配置模型服务时返回 `AI_PROVIDER_NOT_CONFIGURED`，保留手动记录。
+
+协议依据：[DeepSeek 图像理解](https://api-docs.deepseek.com/zh-cn/guides/vision/)、[模型与价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)、[思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。
 
 ## 部署提醒
 

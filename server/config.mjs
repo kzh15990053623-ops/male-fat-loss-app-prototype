@@ -11,10 +11,9 @@ loadDotEnv(join(root, ".env"));
 export const port = Number(process.env.PORT || 5173);
 export const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
 export const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
-// Server-only key for account deletion and direct hosted AI budget RPCs.
-// The limited budget gateway can run without exporting this key from Supabase.
-export const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+// Optional server-only admin key; authenticated gateways work without exporting it.
 export const nutritionAiBudgetGatewayToken = String(process.env.NUTRITION_AI_BUDGET_GATEWAY_TOKEN || "").trim();
+export const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
 function boundedNumber(value, fallback, min, max) {
   const parsed = Number(value);
@@ -40,6 +39,12 @@ export const nutritionAiProtocol = ["contract", "deepseek"].includes(process.env
   : "openai-compatible";
 export const nutritionAiTimeoutMs = Math.max(3000, Math.min(45000, Number(process.env.NUTRITION_AI_TIMEOUT_MS || 15000)));
 export const nutritionAiAllowedUserId = String(process.env.NUTRITION_AI_ALLOWED_USER_ID || "").trim();
+export const nutritionAiAllowedUserIds = String(process.env.NUTRITION_AI_ALLOWED_USER_IDS || nutritionAiAllowedUserId)
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean);
+export const nutritionAiUserMonthlyLimit = boundedNumber(process.env.NUTRITION_AI_USER_MONTHLY_LIMIT, 20, 1, 20);
+export const nutritionAiUserDailyLimit = boundedNumber(process.env.NUTRITION_AI_USER_DAILY_LIMIT, 5, 1, 5);
 export const nutritionAiBudgetPath = resolve(root, process.env.NUTRITION_AI_BUDGET_PATH || "data/nutrition-budget.json");
 // A lower limit is allowed, but this personal deployment can never exceed 100 CNY/month.
 export const nutritionAiMonthlyBudgetMicros = boundedNumber(

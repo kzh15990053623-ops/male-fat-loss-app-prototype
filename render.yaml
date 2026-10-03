@@ -4,7 +4,6 @@
 services:
   - type: web
     name: male-fat-loss-app-prototype
-    branch: main
     runtime: node
     plan: free
     buildCommand: npm ci
@@ -20,6 +19,8 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: ACCOUNT_DELETION_GATEWAY_ENABLED
+        value: "true"
       - key: SUPABASE_PROBE_TIMEOUT_MS
         value: "3500"
       - key: SUPABASE_READINESS_TTL_MS
@@ -40,5 +41,15 @@ services:
         value: "30000"
       - key: NUTRITION_AI_ALLOWED_USER_ID
         sync: false
+      - key: NUTRITION_AI_ALLOWED_USER_IDS
+        sync: false
+      - key: NUTRITION_AI_BUDGET_GATEWAY_TOKEN
+        sync: false
+      - key: NUTRITION_AI_USER_MONTHLY_LIMIT
+        value: "20"
+      - key: NUTRITION_AI_USER_DAILY_LIMIT
+        value: "5"
+      - key: PUBLIC_APP_ORIGIN
+        value: https://male-fat-loss-app-prototype.onrender.com
       - key: NUTRITION_AI_MONTHLY_BUDGET_CNY
         value: "100"

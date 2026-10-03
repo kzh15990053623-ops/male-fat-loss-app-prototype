@@ -232,10 +232,21 @@ details > summary::-webkit-details-marker {
 .field-label {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: 7px;
   color: var(--ink-3);
   font-size: var(--font-small);
   font-weight: var(--weight-medium);
+}
+
+.field-label input[data-setting-field] {
+  height: 50px;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: var(--font-caption);
+  line-height: 1.4;
 }
 
 .field-label.has-error input,
@@ -249,6 +260,8 @@ details > summary::-webkit-details-marker {
   color: var(--red);
   font-size: 0.78rem;
   font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 p,
@@ -268,6 +281,10 @@ p,
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.settings-grid {
+  align-items: start;
 }
 
 @keyframes page-enter {

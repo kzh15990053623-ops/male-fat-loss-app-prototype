@@ -412,6 +412,8 @@ button:active {
 
 .line-chart-wrap {
   position: relative;
+  /* Keep the SVG margin inside the wrapper so the touch layer stays aligned. */
+  display: flow-root;
   min-width: 0;
 }
 
@@ -430,7 +432,14 @@ button:active {
 }
 
 @keyframes chart-line-draw {
+  99% {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+
   to {
+    /* Scaled SVGs with non-scaling strokes can shorten normalized dashes. */
+    stroke-dasharray: none;
     stroke-dashoffset: 0;
   }
 }
@@ -664,6 +673,16 @@ button:active {
   place-items: start center;
 }
 
+.setup-screen > .native-cloud-panel {
+  width: 100%;
+  max-width: 394px;
+}
+
+.native-cloud-panel form {
+  display: grid;
+  gap: 16px;
+}
+
 .lock-card {
   position: relative;
   width: 100%;
@@ -676,6 +695,54 @@ button:active {
 
 .setup-card {
   max-width: 394px;
+}
+
+.setup-group {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.setup-group h2 {
+  margin-bottom: 12px;
+  font-size: 1rem;
+}
+
+.setup-group h2 small,
+.setup-group > p {
+  color: var(--muted);
+  font-size: var(--font-caption);
+  font-weight: var(--weight-regular);
+}
+
+.setup-group > p {
+  margin: -5px 0 12px;
+}
+
+.calorie-setting {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.calorie-setting-help {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  line-height: 1.4;
+}
+
+.calorie-setting-help button {
+  width: fit-content;
+  min-height: var(--tap);
+  padding: 5px 0;
+  color: var(--green);
+  background: none;
+  font-size: inherit;
+  font-weight: var(--weight-medium);
+  text-align: left;
 }
 
 .brand-lockup {
@@ -1292,4 +1359,217 @@ button:active {
 .skeleton-line i {
   width: 26%;
   height: 12px;
+}
+
+/* 热量概览：估算消耗、已保存预算与记录保持清晰的阅读层次。 */
+.energy-budget {
+  min-width: 0;
+}
+
+.energy-estimates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  border-bottom: 1px solid var(--line-strong);
+  padding-bottom: 10px;
+}
+
+.energy-estimates > span,
+.energy-records > span {
+  min-width: 0;
+}
+
+.energy-estimates > span + span {
+  border-left: 1px solid var(--line-strong);
+  padding-left: 16px;
+}
+
+.energy-estimates > span > span,
+.energy-records > span > span {
+  display: block;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  line-height: 1.6;
+}
+
+.energy-estimates strong,
+.energy-records strong {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px;
+  margin-top: 5px;
+  font-family: var(--font-data);
+  font-size: 1.25rem;
+  font-weight: var(--weight-semibold);
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.energy-budget strong small,
+.energy-approx {
+  font-family: var(--font-cjk);
+  font-size: var(--font-caption);
+  font-weight: var(--weight-regular);
+}
+
+.energy-approx {
+  color: var(--muted);
+}
+
+.energy-records {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.energy-records strong {
+  font-size: 1.25rem;
+}
+
+.energy-equation {
+  font-size: var(--font-caption);
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.energy-budget-details > summary {
+  display: block;
+  cursor: pointer;
+  list-style: none;
+}
+
+.energy-budget-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.energy-budget-details > summary:focus-visible {
+  outline: 2px solid var(--page-accent, var(--ink));
+  outline-offset: 5px;
+  border-radius: 2px;
+}
+
+.energy-summary-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-top: 8px;
+}
+
+.energy-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--page-accent, var(--ink));
+  font-size: var(--font-caption);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.energy-disclosure svg {
+  width: 12px;
+  height: 12px;
+  transform: rotate(90deg);
+}
+
+.energy-budget-details[open] .energy-disclosure svg {
+  transform: rotate(-90deg);
+}
+
+.energy-budget-details[open] > .energy-explanation-body {
+  margin-top: 14px;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 14px;
+}
+
+.energy-explanation {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-strong);
+  font-size: var(--font-caption);
+  line-height: 1.75;
+}
+
+.energy-explanation > summary {
+  min-height: var(--tap);
+  padding: 12px 0;
+  color: var(--page-accent, var(--ink));
+  cursor: pointer;
+  font-size: var(--font-small);
+  font-weight: var(--weight-semibold);
+}
+
+.energy-explanation-body {
+  padding-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.energy-explanation-body p {
+  margin: 12px 0;
+  color: var(--muted);
+}
+
+.energy-estimate-breakdown {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.energy-estimate-breakdown dt {
+  color: var(--muted);
+}
+
+.energy-estimate-breakdown dd {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.record-entry {
+  padding: 12px 0;
+  border-top: 1px solid var(--border, #ded8ce);
+}
+.record-entry p {
+  overflow-wrap: anywhere;
+}
+.record-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.record-entry-actions button,
+.template-chip button {
+  min-height: 44px;
+  min-width: 44px;
+}
+.template-chip {
+  flex-wrap: wrap;
+}
+.history-records {
+  padding: 16px;
+}
+.history-day {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #ded8ce);
+}
+.history-day summary {
+  min-height: 44px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.history-day pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.privacy-info summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }

@@ -1,0 +1,11 @@
+{
+  "appId": "com.wenjian.healthledger",
+  "appName": "稳减",
+  "webDir": "dist-android",
+  "loggingBehavior": "none",
+  "plugins": {
+    "CapacitorSQLite": {
+      "androidIsEncryption": false
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { state, meals, runtime, initialStateSnapshot, initialMealsSnapshot, CURRENT_SCHEMA_VERSION } from "./app-state.js";
 import { cloneData, isPlainRecord, finiteNumber, todayKey, dateLabel, timestampMs } from "./app-utils.js";
+import { summarizeMeal } from "./meal-entries.js";
 
 // Keep in sync with server/data.mjs (validated by scripts/validate-data-model.mjs).
 const METRIC_LOG_LIMIT = 90;
@@ -34,7 +35,7 @@ function normalizeMealList(rawMeals, fallbackMeals = createBlankMeals()) {
     const fallback = fallbackMeals[index] || initialMealsSnapshot[index] || {};
     const macros = isPlainRecord(meal.macros) ? meal.macros : {};
     const nutritionSource = meal.nutritionSource === "ai" ? "ai" : "manual";
-    return {
+    return summarizeMeal({
       ...fallback,
       id: typeof meal.id === "string" ? meal.id : fallback.id || `meal-${index}`,
       name: typeof meal.name === "string" ? meal.name : fallback.name || "餐次",
@@ -48,7 +49,8 @@ function normalizeMealList(rawMeals, fallbackMeals = createBlankMeals()) {
       },
       nutritionSource,
       aiMeta: nutritionSource === "ai" ? normalizeAiMeta(meal.aiMeta) : null,
-    };
+      ...(Array.isArray(meal.entries) ? { entries: cloneData(meal.entries) } : {}),
+    });
   });
   return normalized.length ? normalized : fallbackMeals;
 }
@@ -106,6 +108,7 @@ function createBlankDailyRecord(date = todayKey()) {
     waterMl: 0,
     steps: 0,
     sleep: 0,
+    intakeStatus: "unknown",
     calorieBudget: state.calorieBudget || 0,
     weight: metricValueForDate("weightLogs", date),
     waist: metricValueForDate("waistLogs", date),
@@ -133,6 +136,9 @@ function currentDailyRecord(date = todayKey(), updatedAt = "") {
     waterMl: state.waterMl,
     steps: state.steps,
     sleep: state.sleep,
+    intakeStatus: state.intakeStatus || "unknown",
+    restDay: Boolean(state.restDay),
+    habitTargets: { water: state.waterTarget, steps: state.stepsTarget, sleep: state.sleepTarget || 7 },
     calorieBudget: state.calorieBudget,
     weight: metricValueForDate("weightLogs", date),
     waist: metricValueForDate("waistLogs", date),
@@ -153,6 +159,8 @@ function updateTodayRecord(updatedAt = new Date().toISOString()) {
 
 function applyDailyRecord(record) {
   if (!isPlainRecord(record)) return;
+  state.intakeStatus = record.intakeStatus || "unknown";
+  state.restDay = Boolean(record.restDay);
   if (Array.isArray(record.meals)) meals.splice(0, meals.length, ...normalizeMealList(record.meals));
   if (finiteNumber(record.waterMl)) state.waterMl = record.waterMl;
   if (finiteNumber(record.steps)) state.steps = record.steps;
@@ -161,7 +169,8 @@ function applyDailyRecord(record) {
     state.weight = record.weight;
     state.weightDraft = record.weight;
   }
-  if (finiteNumber(record.waist)) {
+  // 记录保留历史腰围；设置中明确清空当前腰围后，旧日记录不能把它重新填回。
+  if (state.waist > 0 && finiteNumber(record.waist)) {
     state.waist = record.waist;
     state.waistDraft = record.waist;
   }
@@ -190,6 +199,10 @@ function rolloverToTodayIfNeeded(now = new Date().toISOString()) {
   state.dailyRecords = isPlainRecord(state.dailyRecords) ? state.dailyRecords : {};
   const previous = state.dailyRecords[previousDate];
   const candidate = currentDailyRecord(previousDate, previous?.updatedAt || "");
+  if (previous) {
+    if (!("habitTargets" in previous)) delete candidate.habitTargets;
+    if (!("restDay" in previous) && !candidate.restDay) delete candidate.restDay;
+  }
   const content = JSON.stringify(dailyRecordContent(candidate));
   if (previous || content !== JSON.stringify(dailyRecordContent(createBlankDailyRecord(previousDate)))) {
     state.dailyRecords[previousDate] =
@@ -503,7 +516,7 @@ function cloneMergeValue(value) {
 function stableArrayIdentity(path) {
   const key = path[path.length - 1];
   if (key === "weightLogs" || key === "waistLogs") return "date";
-  if (key === "meals" || key === "customActivities" || key === "mealTemplates") return "id";
+  if (key === "entries" || key === "meals" || key === "customActivities" || key === "mealTemplates") return "id";
   return "";
 }
 
@@ -547,6 +560,7 @@ function mergeKeyedArrays(base, local, remote, path, localWinsConflict) {
   return merged;
 }
 
+let mergeConflicts = [];
 function mergeThreeWayValue(base, local, remote, path, localWinsConflict) {
   if (mergeValuesEqual(local, base)) return cloneMergeValue(remote);
   if (mergeValuesEqual(remote, base) || mergeValuesEqual(local, remote)) return cloneMergeValue(local);
@@ -582,6 +596,16 @@ function mergeThreeWayValue(base, local, remote, path, localWinsConflict) {
     return merged;
   }
 
+  if (
+    (path.includes("entries") ||
+      path.includes("weightLogs") ||
+      path.includes("waistLogs") ||
+      (path.includes("dailyRecords") && ["weight", "waist"].includes(path.at(-1)))) &&
+    !["updatedAt", "status", "date"].includes(path.at(-1))
+  ) {
+    const id = JSON.stringify([path, local, remote]);
+    mergeConflicts.push({ id, path, local: cloneData(local), remote: cloneData(remote), createdAt: new Date().toISOString() });
+  }
   // Same-leaf concurrent edits cannot both survive. Prefer the unsynced local
   // value without consulting cross-device wall clocks.
   return cloneMergeValue(local);
@@ -604,6 +628,7 @@ function mergePayloads(localPayload, migratedServerPayload, rawServerData) {
   const localState = persistedStateFrom(localPayload.state || {});
   const serverState = persistedStateFrom(migratedServerPayload.state || {});
   const baseState = persistedStateFrom(syncBase.state || {});
+  mergeConflicts = [];
   const mergedState = mergeThreeWayValue(baseState, localState, serverState, ["state"], true);
   mergedState.dailyRecords = pruneDailyRecords(mergedState.dailyRecords);
   mergedState.weightLogs = normalizeMetricLogs(mergedState.weightLogs);
@@ -611,6 +636,11 @@ function mergePayloads(localPayload, migratedServerPayload, rawServerData) {
   mergedState.schemaVersion = CURRENT_SCHEMA_VERSION;
   delete mergedState.clearedAt;
   const mergedMeals = mergeThreeWayValue(syncBase.meals, localPayload.meals, migratedServerPayload.meals, ["meals"], true);
+  if (mergeConflicts.length)
+    mergedState.recordConflicts = [
+      ...new Map([...(mergedState.recordConflicts || []), ...mergeConflicts].map((item) => [item.id, item])).values(),
+    ];
+
   const timestampCandidates = [localPayload.localUpdatedAt, rawServerData.updatedAt, migratedServerPayload.localUpdatedAt]
     .filter((value) => typeof value === "string" && timestampMs(value))
     .sort((a, b) => timestampMs(b) - timestampMs(a));
@@ -630,6 +660,10 @@ function mergePayloads(localPayload, migratedServerPayload, rawServerData) {
 }
 
 function resetAppData({ blank = false, revision = 0, localUpdatedAt = "" } = {}) {
+  runtime.mealPhotoSequence += 1;
+  runtime.mealPhoto = null;
+  runtime.mealPhotoLoading = false;
+  runtime.mealPhotoReviewKey = "";
   const authProvider = runtime.authProvider === "local" ? "local" : "supabase";
   const localAuthAvailable = Boolean(state.localAuthAvailable);
   const nextState = blank ? createNewUserState() : cloneData(initialStateSnapshot);
@@ -663,6 +697,7 @@ export {
   createBlankDailyRecord,
   upsertMetricLog,
   currentDailyRecord,
+  applyDailyRecord,
   updateTodayRecord,
   hydrateTodayFromRecords,
   rolloverToTodayIfNeeded,

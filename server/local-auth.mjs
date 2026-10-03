@@ -3,7 +3,16 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { localAuthDataPath, localAuthEnabled } from "./config.mjs";
-import { defaultData, isRecord, normalizeAppData, sanitizeMeals, stateRevision, stateWriteRevision, storedStateForWrite } from "./data.mjs";
+import {
+  defaultData,
+  isRecord,
+  normalizeAppData,
+  sanitizeMeals,
+  stateRevision,
+  stateWriteRevision,
+  storedStateForWrite,
+  validateStateWrite,
+} from "./data.mjs";
 import { clearExpiredAccessSessions } from "./session.mjs";
 
 const scrypt = promisify(scryptCallback);
@@ -314,6 +323,15 @@ export function createLocalAuthService({ filePath = localAuthDataPath, enabled =
       }
       const nextRevision = currentRevision + 1;
       const updatedAt = new Date().toISOString();
+      validateStateWrite(safePayload);
+      if (safePayload.state.clearedAt) user.history = {};
+      else {
+        user.history ||= {};
+        for (const [date, record] of Object.entries(safePayload.state.dailyRecords || {})) {
+          if (JSON.stringify(record) === JSON.stringify(user.state?.dailyRecords?.[date])) continue;
+          user.history[date] = { date, record, revision: (user.history[date]?.revision || 0) + 1 };
+        }
+      }
       user.state = storedStateForWrite(safePayload.state, nextRevision, updatedAt);
       user.meals = sanitizeMeals(safePayload.meals);
       user.updatedAt = updatedAt;
@@ -324,11 +342,45 @@ export function createLocalAuthService({ filePath = localAuthDataPath, enabled =
     });
   }
 
+  async function readHistory(userId, before = "9999-12-31", limit = 30, exact) {
+    return stableRead((store) =>
+      Object.values(store.users[userId]?.history || {})
+        .filter((row) => (exact ? row.date === exact : row.date < before))
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, limit),
+    );
+  }
+  async function writeHistory(userId, date, record, revision) {
+    return mutateStore((store) => {
+      const user = store.users[userId];
+      if (!user) throw localAuthError("账号不存在", { status: 404 });
+      user.history ||= {};
+      const current = user.history[date];
+      if ((current?.revision || 0) !== revision)
+        throw Object.assign(new Error("历史记录冲突"), {
+          status: 409,
+          code: "HISTORY_CONFLICT",
+          conflict: current || { date, record: null, revision: 0 },
+        });
+      const row = (user.history[date] = { date, record, revision: revision + 1 });
+      if (user.state?.dailyRecords?.[date]) user.state.dailyRecords[date] = record;
+      for (const field of ["weight", "waist"])
+        if (typeof record[field] === "number")
+          user.state[field + "Logs"] = [
+            ...(user.state[field + "Logs"] || []).filter((item) => item.date !== date),
+            { date, value: record[field] },
+          ];
+      user.state.syncRevision = stateRevision(user.state) + 1;
+      user.updatedAt = new Date().toISOString();
+      return row;
+    });
+  }
   async function deleteAppState(userId) {
     assertEnabled();
     return mutateStore((store) => {
       const user = store.users[userId];
       if (!user) throw localAuthError("本机账号不存在。", { status: 404, code: "LOCAL_USER_NOT_FOUND" });
+      user.history = {};
       user.state = null;
       user.meals = null;
       user.updatedAt = new Date().toISOString();
@@ -363,6 +415,8 @@ export function createLocalAuthService({ filePath = localAuthDataPath, enabled =
     readAppState,
     writeAppState,
     deleteAppState,
+    readHistory,
+    writeHistory,
     deleteAccount,
   };
 }

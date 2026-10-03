@@ -1,3 +1,7 @@
+import { validateStateWrite } from "../src/state-contract.js";
+export { validateStateWrite };
+import { summarizeMeal } from "../src/meal-entries.js";
+
 export const defaultData = {
   state: null,
   meals: null,
@@ -108,7 +112,7 @@ export function sanitizeMeals(rawMeals) {
     .slice(0, 20)
     .map((meal, index) => {
       const macros = isRecord(meal.macros) ? meal.macros : {};
-      return {
+      return summarizeMeal({
         id: safeText(meal.id, `meal-${index}`, 40) || `meal-${index}`,
         name: safeText(meal.name, "餐次", 40) || "餐次",
         calories: nonNegativeNumber(meal.calories),
@@ -126,7 +130,30 @@ export function sanitizeMeals(rawMeals) {
         },
         nutritionSource: meal.nutritionSource === "ai" ? "ai" : "manual",
         aiMeta: meal.nutritionSource === "ai" ? sanitizeAiMeta(meal.aiMeta) : null,
-      };
+        ...(Array.isArray(meal.entries)
+          ? {
+              entries: meal.entries.map((entry) => ({
+                id: safeText(entry.id, "", 80),
+                date: safeText(entry.date, "", 24),
+                slot: safeText(entry.slot, "", 40),
+                food: safeText(entry.food, "", 240),
+                amount: finiteNumber(entry.amount) ? Math.max(0, entry.amount) : null,
+                unit: safeText(entry.unit, "g", 12),
+                cooking: safeText(entry.cooking, "不确定", 24),
+                oilGrams: finiteNumber(entry.oilGrams) ? Math.max(0, entry.oilGrams) : null,
+                sauce: safeText(entry.sauce, "不确定", 24),
+                calories: nonNegativeNumber(entry.calories),
+                macros: Object.fromEntries(["protein", "carbs", "fat"].map((key) => [key, nonNegativeNumber(entry.macros?.[key])])),
+                nutritionKnown: entry.nutritionKnown !== false,
+                ...(typeof entry.macrosKnown === "boolean" ? { macrosKnown: entry.macrosKnown } : {}),
+                nutritionSource: entry.nutritionSource === "ai" ? "ai" : "manual",
+                aiMeta: sanitizeAiMeta(entry.aiMeta),
+                updatedAt: safeText(entry.updatedAt, "", 32),
+                ...(entry.deletedAt ? { deletedAt: safeText(entry.deletedAt, "", 32) } : {}),
+              })),
+            }
+          : {}),
+      });
     });
 }
 
@@ -155,6 +182,12 @@ function sanitizeMealTemplates(rawTemplates) {
       protein: nonNegativeNumber(template.protein),
       carbs: nonNegativeNumber(template.carbs),
       fat: nonNegativeNumber(template.fat),
+      amount: finiteNumber(template.amount) ? template.amount : null,
+      unit: safeText(template.unit, "g", 12),
+      cooking: safeText(template.cooking, "不确定", 24),
+      oilGrams: nonNegativeNumber(template.oilGrams),
+      sauce: safeText(template.sauce, "不确定", 24),
+      nutritionKnown: template.nutritionKnown !== false,
     }))
     .slice(0, 20);
 }

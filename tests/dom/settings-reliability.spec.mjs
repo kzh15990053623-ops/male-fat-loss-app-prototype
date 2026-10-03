@@ -59,6 +59,69 @@ test("当前体重的错误在设置和首次引导中均阻止提交", async ({
   expect(await page.evaluate(async () => (await import("/src/app-state.js")).state.setupCompleted)).toBe(false);
 });
 
+test("首次建档可跳过腰围并自动估算预算，补录时才建立腰围基线", async ({ page }) => {
+  await openFreshApp(page);
+  await page.evaluate(async () => {
+    const { state } = await import("/src/app-state.js");
+    const { render } = await import("/src/app-actions.js");
+    state.appLoading = false;
+    state.authRequired = false;
+    state.setupCompleted = false;
+    render();
+  });
+
+  await page.locator("[data-setting-formula]").selectOption("male");
+  await page.locator("[data-complete-setup]").click();
+  await expect(page.locator("#field-error-height")).toHaveText("请填写身高");
+  await page.locator('[name="height"]').fill("0");
+  await page.locator("[data-complete-setup]").click();
+  await expect(page.locator("#field-error-height")).toContainText("120–230cm");
+
+  await page.locator('[name="height"]').fill("180");
+  await page.locator('[name="age"]').fill("29");
+  await page.locator('[name="weight"]').fill("80");
+  await page.locator('[name="targetWeight"]').fill("70");
+  await expect(page.locator('[name="calories"]')).toHaveValue("1904");
+  await page.locator('[name="weeklyLoss"]').fill("2.5");
+  await page.locator("[data-complete-setup]").click();
+  await expect(page.locator("#field-error-weeklyLoss")).toContainText("0.1–1.2 kg/周");
+  await expect(page.locator('[name="calories"]')).toHaveValue("1904");
+
+  await page.locator('[name="weeklyLoss"]').fill("0.5");
+  await page.locator('[name="calories"]').fill("2000");
+  await page.locator('[name="height"]').fill("181");
+  await expect(page.locator('[name="calories"]')).toHaveValue("2000");
+  await page.locator("[data-use-calorie-estimate]").click();
+  await expect(page.locator('[name="calories"]')).toHaveValue("1913");
+  await expect(page.locator('[name="waist"]')).toBeEmpty();
+  await expect(page.locator('[name="targetWaist"]')).toBeEmpty();
+
+  await page.locator("[data-complete-setup]").click();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
+  const setupState = await page.evaluate(async () => {
+    const { state } = await import("/src/app-state.js");
+    return {
+      waist: state.waist,
+      targetWaist: state.targetWaist,
+      waistLogs: state.waistLogs,
+      todayWaist: state.dailyRecords[state.currentDate]?.waist,
+    };
+  });
+  expect(setupState).toEqual({ waist: 0, targetWaist: 0, waistLogs: [], todayWaist: null });
+
+  await page.locator("[data-weight-input]").fill("79.5");
+  await page.locator("[data-save-body]").click();
+  expect(await page.evaluate(async () => (await import("/src/app-state.js")).state.waistLogs)).toEqual([]);
+  await page.locator("[data-waist-input]").fill("95");
+  await page.locator("[data-save-body]").click();
+  expect(
+    await page.evaluate(async () => {
+      const { state } = await import("/src/app-state.js");
+      return { waist: state.waist, startWaist: state.startWaist, waistLogs: state.waistLogs.length };
+    }),
+  ).toEqual({ waist: 95, startWaist: 95, waistLogs: 1 });
+});
+
 test("信任设备必须明确保存，保留限制和导出入口可直接使用", async ({ page }) => {
   await openFreshApp(page);
   await seedApp(page, { variant: "full", tab: "home" });
@@ -67,11 +130,12 @@ test("信任设备必须明确保存，保留限制和导出入口可直接使�
     storeSession({ accessToken: "settings-test-token", provider: "supabase", user: { id: "settings-test-user" } });
   });
   await page.route("**/api/state", (route) => route.fulfill({ status: 503 }));
+  await page.route("**/api/history*", (route) => route.fulfill({ json: { rows: [], next: null } }));
   await page.locator('[data-app-action="goal"]').click();
   const trust = page.locator('[name="trustedOfflineAccess"]');
   await expect(trust).not.toBeChecked();
   await expect(page.locator("#trusted-offline-note")).toContainText("能使用此浏览器的人也能查看");
-  await expect(page.locator(".settings-sheet")).toContainText("180 个记录日");
+  await expect(page.locator(".settings-sheet")).toContainText("完整历史按账号、日期独立归档");
   await trust.check();
   expect(await page.evaluate(async () => (await import("/src/app-storage.js")).isOfflineAccessTrusted())).toBe(false);
   await page.locator("[data-save-settings]").click();

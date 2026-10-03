@@ -5,7 +5,20 @@ import htmlTemplatePlugin from "./scripts/eslint-rules/html-template.mjs";
 export default [
   {
     // optimization-summary-report/ 是生成的交付物（含 echarts/mermaid 压缩包），与 docs/ 同类，不参与 lint。
-    ignores: ["node_modules/", "coverage/", "test-results/", "playwright-report/", "docs/", "supabase/", "optimization-summary-report/"],
+    ignores: [
+      "node_modules/",
+      "dist-android/",
+      "android/",
+      "coverage/",
+      "test-results/",
+      "playwright-report/",
+      ".playwright-cli/",
+      "docs/",
+      "supabase/",
+      "optimization-summary-report/",
+      "output/",
+      ".codex-remote-attachments/",
+    ],
   },
   js.configs.recommended,
   {

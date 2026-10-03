@@ -53,10 +53,27 @@ describe("设置范围与草稿", () => {
     }
   });
 
-  it.each(Object.keys(validSettings))("%s 不接受非有限数值或未填写", (field) => {
-    for (const value of [NaN, Infinity, -Infinity, undefined, ""]) {
-      expect(validateCoreSettings({ ...validSettings, [field]: value })).toHaveProperty(field);
-    }
+  it.each(Object.keys(validSettings).filter((field) => !["waist", "targetWaist"].includes(field)))(
+    "%s 不接受非有限数值或未填写",
+    (field) => {
+      for (const value of [NaN, Infinity, -Infinity, undefined, ""]) {
+        expect(validateCoreSettings({ ...validSettings, [field]: value })).toHaveProperty(field);
+      }
+    },
+  );
+
+  it("腰围可留空，填写的腰围仍需满足范围和目标关系", () => {
+    expect(validateCoreSettings({ ...validSettings, waist: null, targetWaist: null })).toEqual({});
+    expect(validateCoreSettings({ ...validSettings, waist: null, targetWaist: 86 })).toEqual({});
+    expect(validateCoreSettings({ ...validSettings, waist: 95.4, targetWaist: null })).toEqual({});
+    expect(validateCoreSettings({ ...validSettings, waist: 0 })).toHaveProperty("waist", "请输入 50–180cm");
+    expect(validateCoreSettings({ ...validSettings, targetWaist: 0 })).toHaveProperty("targetWaist", "请输入 50–160cm");
+  });
+
+  it("空白必填项与明确输入零得到不同提示", () => {
+    expect(validateCoreSettings({ ...validSettings, weight: null })).toHaveProperty("weight", "请填写当前体重");
+    expect(validateCoreSettings({ ...validSettings, weight: 0 })).toHaveProperty("weight", "请输入 40–200kg");
+    expect(validateCoreSettings({ ...validSettings, weeklyLoss: 2.5 })).toHaveProperty("weeklyLoss", "每周减重目标请输入 0.1–1.2 kg/周");
   });
 
   it("目标关系检查不会覆盖更准确的范围错误", () => {

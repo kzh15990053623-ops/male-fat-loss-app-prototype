@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   requestNutritionEstimate: vi.fn(),
   nutritionAiConfigured: vi.fn(),
   assertNutritionOwner: vi.fn(),
+  personalBudget: vi.fn((value) => value),
   nutritionBudgetStatus: vi.fn(),
   local: {
     signup: vi.fn(),
@@ -64,6 +65,7 @@ function request(path, method = "GET", body, headers = {}) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.personalBudget.mockImplementation((value) => value);
   mocks.currentUserFromRequest.mockResolvedValue({ user: { id: "user-a" }, accessToken: "access", provider: "supabase" });
   mocks.isSupabaseConfigured.mockReturnValue(true);
   mocks.nutritionAiConfigured.mockReturnValue(true);
@@ -77,6 +79,52 @@ beforeEach(() => {
 });
 
 describe("API contracts and failure boundaries", () => {
+  it.each(["recover", "resend"])("requests %s mail with an app callback and a generic response", async (action) => {
+    const call = request(
+      "/api/auth/" + action,
+      "POST",
+      { email: "tester@example.com" },
+      { "content-type": "application/json", host: "localhost" },
+    );
+    await call.run();
+    expect(mocks.requestSupabase).toHaveBeenCalledWith(
+      expect.stringContaining("redirect_to=http%3A%2F%2Flocalhost%2F%3Fauth%3Dcallback"),
+      expect.objectContaining({ body: expect.objectContaining({ email: "tester@example.com" }) }),
+    );
+    expect(call.res.body).toMatchObject({ ok: true });
+    expect(call.res.body.message).toContain("如果");
+  });
+  it("rejects cross-site account recovery and malformed verification links before calling Supabase", async () => {
+    await expect(
+      request(
+        "/api/auth/recover",
+        "POST",
+        { email: "tester@example.com" },
+        { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+      ).run(),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      request(
+        "/api/auth/verify",
+        "POST",
+        { type: "signup", tokenHash: "bad" },
+        { "content-type": "application/json", host: "localhost" },
+      ).run(),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mocks.requestSupabase).not.toHaveBeenCalled();
+  });
+  it("verifies default callbacks on the server and stores refresh tokens only in HttpOnly cookies", async () => {
+    mocks.requestSupabase.mockResolvedValue({ access_token: "access", refresh_token: "server-refresh", user: { id: "user-a" } });
+    const call = request(
+      "/api/auth/callback",
+      "POST",
+      { refreshToken: "one-time-refresh-token" },
+      { "content-type": "application/json", host: "localhost" },
+    );
+    await call.run();
+    expect(call.res.body).toEqual({ accessToken: "access", user: { id: "user-a" } });
+    expect(call.res.headers["Set-Cookie"]).toContain("HttpOnly");
+  });
   it("authenticates budget reads, authorizes the owner and forwards photos with server-authenticated identity", async () => {
     mocks.nutritionBudgetStatus.mockResolvedValue({ limitCny: 100 });
     const status = request("/api/ai/budget");
@@ -206,7 +254,8 @@ describe("API contracts and failure boundaries", () => {
     mocks.currentUserFromRequest.mockResolvedValue({ user: { id: "user-a" }, provider });
     const call = request("/api/auth/account", "DELETE");
     await call.run();
-    expect(provider === "local" ? mocks.local.deleteAccount : mocks.deleteSupabaseAccount).toHaveBeenCalledWith("user-a");
+    if (provider === "local") expect(mocks.local.deleteAccount).toHaveBeenCalledWith("user-a");
+    else expect(mocks.deleteSupabaseAccount).toHaveBeenCalledWith("user-a", undefined);
     expect(call.res.headers["Set-Cookie"]).toContain("Max-Age=0");
   });
 

@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { nutritionAiApiKey, nutritionAiEndpoint, nutritionAiModel, nutritionAiProtocol, nutritionAiTimeoutMs } from "./config.mjs";
 import { validateNutritionPhoto, nutritionContext } from "./nutrition-photo.mjs";
-import { assertNutritionOwner, nutritionBudgetStatus, reserveNutritionBudget, reportNutritionUsage } from "./nutrition-budget.mjs";
+import {
+  assertNutritionOwner,
+  nutritionBudgetStatus,
+  reserveNutritionBudget,
+  reportNutritionUsage,
+  personalBudget,
+} from "./nutrition-budget.mjs";
 
 const MAX_FOOD_TEXT_LENGTH = 600;
 const MAX_UPSTREAM_BODY_BYTES = 256 * 1024;
@@ -295,8 +301,8 @@ export async function requestNutritionEstimate(foodTextValue, context = {}, { lo
       retryable: false,
       requestId,
     });
+  assertNutritionOwner(userId);
   if (deepseek) {
-    assertNutritionOwner(userId);
     if (
       !/^https:\/\/api\.deepseek\.com\/(v1\/)?chat\/completions$/.test(nutritionAiEndpoint) ||
       nutritionAiModel !== "deepseek-flash" ||
@@ -312,10 +318,10 @@ export async function requestNutritionEstimate(foodTextValue, context = {}, { lo
   }
   const cacheKey = responseCacheKey(foodText, context, locale, photo, userId);
   const cached = readCachedResponse(cacheKey);
-  if (cached) return { ...cached, ...(deepseek ? { budget: await nutritionBudgetStatus() } : {}) };
+  if (cached) return { ...cached, ...(deepseek ? { budget: personalBudget(await nutritionBudgetStatus(userId)) } : {}) };
 
   // Persist the reservation BEFORE dispatch, and never refund unknown charges.
-  let budget = deepseek ? await reserveNutritionBudget(requestId) : null;
+  let budget = deepseek ? await reserveNutritionBudget(requestId, userId) : null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), nutritionAiTimeoutMs);
   try {
@@ -330,7 +336,7 @@ export async function requestNutritionEstimate(foodTextValue, context = {}, { lo
       signal: controller.signal,
     });
     const payload = await responsePayload(response, requestId);
-    if (deepseek) budget = (await reportNutritionUsage(requestId, payload?.usage).catch(() => null)) || budget;
+    if (deepseek) await reportNutritionUsage(requestId, payload?.usage).catch(() => null);
     const upstreamRequestId = response.headers.get("x-request-id") || "";
     if (!response.ok) {
       const isRateLimited = response.status === 429;
@@ -359,7 +365,7 @@ export async function requestNutritionEstimate(foodTextValue, context = {}, { lo
         .slice(0, 240);
       result.warnings.push("照片份量、用油和酱料均为估算，请核对后保存。");
     }
-    if (deepseek) result.budget = budget;
+    if (deepseek) result.budget = personalBudget(budget);
     writeCachedResponse(cacheKey, result);
     return result;
   } catch (error) {

@@ -1,13 +1,16 @@
+import { supabaseApiHeaders } from "./supabase-headers.mjs";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { supabaseApiHeaders } from "./supabase-headers.mjs";
 import {
   hostedRuntime,
+  nutritionAiBudgetGatewayToken,
   nutritionAiAllowedUserId,
+  nutritionAiAllowedUserIds,
+  nutritionAiUserMonthlyLimit,
+  nutritionAiUserDailyLimit,
   nutritionAiBudgetPath,
   nutritionAiMonthlyBudgetMicros,
-  nutritionAiBudgetGatewayToken,
   supabaseUrl,
   supabaseServiceRoleKey,
 } from "./config.mjs";
@@ -30,8 +33,9 @@ function unavailable() {
 }
 
 export function assertNutritionOwner(userId) {
-  if ((!nutritionAiAllowedUserId && hostedRuntime) || (nutritionAiAllowedUserId && nutritionAiAllowedUserId !== userId)) {
-    throw Object.assign(new Error("拍照识别目前仅对配置的个人账号开放"), {
+  const allowed = nutritionAiAllowedUserIds.length ? nutritionAiAllowedUserIds : nutritionAiAllowedUserId ? [nutritionAiAllowedUserId] : [];
+  if ((!allowed.length && hostedRuntime) || (allowed.length && !allowed.includes(userId))) {
+    throw Object.assign(new Error("AI 识别仅向本轮受邀账号开放，手动记录仍可使用"), {
       status: 403,
       code: "AI_ACCOUNT_NOT_ALLOWED",
       requestId: randomUUID(),
@@ -60,7 +64,7 @@ function summary(month, entries, limit) {
   };
 }
 
-async function localOperation(action, requestId, usage) {
+async function localOperation(action, requestId, usage, userId) {
   await mkdir(dirname(nutritionAiBudgetPath), { recursive: true });
   // Cross-process exclusion. A crash leaves a lock and fails closed; do not
   // automatically discard it or erase a ledger to "recover" the budget.
@@ -85,10 +89,15 @@ async function localOperation(action, requestId, usage) {
     const month = budgetMonth();
     const limit = Math.min(MAX_MONTHLY_MICROS, nutritionAiMonthlyBudgetMicros);
     const before = summary(month, ledger.entries, limit);
+    const day = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const personal = Object.values(ledger.entries).filter((row) => row.userId === userId && row.month === month);
+    const quotaExceeded =
+      userId &&
+      (personal.length >= nutritionAiUserMonthlyLimit || personal.filter((row) => row.day === day).length >= nutritionAiUserDailyLimit);
     if (action === "reserve") {
-      if (!before.remainingRequests) return { ...before, allowed: false };
+      if (!before.remainingRequests || quotaExceeded) return { ...before, allowed: false, quotaExceeded: Boolean(quotaExceeded) };
       if (ledger.entries[requestId]) throw unavailable();
-      ledger.entries[requestId] = { month, estimatedMicros: null };
+      ledger.entries[requestId] = { month, day, userId: userId || null, estimatedMicros: null };
     } else if (action === "report") {
       const row = ledger.entries[requestId];
       if (!row) throw unavailable();
@@ -107,27 +116,55 @@ async function localOperation(action, requestId, usage) {
       }
       await rename(tempPath, nutritionAiBudgetPath);
     }
-    return { ...summary(month, ledger.entries, limit), allowed: true };
+    const result = summary(month, ledger.entries, limit);
+    const rows = Object.values(ledger.entries).filter((row) => row.userId === userId && row.month === month);
+    return {
+      ...result,
+      allowed: true,
+      ...(userId
+        ? {
+            userRequests: rows.length,
+            userMonthlyLimit: nutritionAiUserMonthlyLimit,
+            userDailyLimit: nutritionAiUserDailyLimit,
+            userRemainingRequests: Math.max(
+              0,
+              Math.min(
+                result.remainingRequests,
+                nutritionAiUserMonthlyLimit - rows.length,
+                nutritionAiUserDailyLimit - rows.filter((row) => row.day === day).length,
+              ),
+            ),
+          }
+        : {}),
+    };
   } finally {
     await lock.close();
     await unlink(lockPath);
   }
 }
 
-async function operation(action, requestId = null, usage = null) {
+async function operation(action, requestId = null, usage = null, userId = null) {
   try {
     if (hostedRuntime) {
       if (!supabaseUrl || (!supabaseServiceRoleKey && !nutritionAiBudgetGatewayToken)) throw unavailable();
       const useGateway = Boolean(nutritionAiBudgetGatewayToken);
       const response = await fetch(
-        `${supabaseUrl}${useGateway ? "/functions/v1/nutrition-budget-gateway" : "/rest/v1/rpc/nutrition_budget"}`,
+        `${supabaseUrl}${useGateway ? "/functions/v1/nutrition-budget-gateway" : `/rest/v1/rpc/${userId ? "nutrition_budget_for_user" : "nutrition_budget"}`}`,
         {
           method: "POST",
           signal: AbortSignal.timeout(useGateway ? 10000 : 5000),
           headers: useGateway
             ? { "Content-Type": "application/json", "X-Budget-Token": nutritionAiBudgetGatewayToken }
             : supabaseApiHeaders(supabaseServiceRoleKey, "", { "Content-Type": "application/json" }),
-          body: JSON.stringify({ p_action: action, p_request_id: requestId, p_limit: nutritionAiMonthlyBudgetMicros, p_usage: usage }),
+          body: JSON.stringify({
+            p_action: action,
+            p_request_id: requestId,
+            p_limit: nutritionAiMonthlyBudgetMicros,
+            p_usage: usage,
+            ...(userId
+              ? { p_user_id: userId, p_monthly_limit: nutritionAiUserMonthlyLimit, p_daily_limit: nutritionAiUserDailyLimit }
+              : {}),
+          }),
         },
       );
       if (!response.ok) throw unavailable();
@@ -138,6 +175,12 @@ async function operation(action, requestId = null, usage = null) {
         !/^\d{4}-(0[1-9]|1[0-2])$/.test(data.month) ||
         ![data.reservedCny, data.limitCny, data.estimatedCny].every((n) => Number.isFinite(n) && n >= 0) ||
         ![data.requests, data.remainingRequests, data.unreportedRequests].every((n) => Number.isSafeInteger(n) && n >= 0) ||
+        (userId &&
+          (![data.userRequests, data.userRemainingRequests, data.userMonthlyLimit, data.userDailyLimit].every(
+            (n) => Number.isSafeInteger(n) && n >= 0,
+          ) ||
+            data.userMonthlyLimit > 20 ||
+            data.userDailyLimit > 5)) ||
         data.limitCny > 100 ||
         data.reservedCny !== data.requests / 10 ||
         data.unreportedRequests > data.requests ||
@@ -146,7 +189,7 @@ async function operation(action, requestId = null, usage = null) {
         throw unavailable();
       return data;
     }
-    const pending = queue.then(() => localOperation(action, requestId, usage));
+    const pending = queue.then(() => localOperation(action, requestId, usage, userId));
     queue = pending.catch(() => {});
     return await pending;
   } catch {
@@ -154,20 +197,33 @@ async function operation(action, requestId = null, usage = null) {
   }
 }
 
-export function nutritionBudgetStatus() {
-  return operation("status");
+export function nutritionBudgetStatus(userId = null) {
+  return operation("status", null, null, userId);
 }
 
-export async function reserveNutritionBudget(requestId) {
-  const result = await operation("reserve", requestId);
+export async function reserveNutritionBudget(requestId, userId = null) {
+  const result = await operation("reserve", requestId, null, userId);
   if (!result.allowed)
-    throw Object.assign(new Error("本月 AI 预算额度已用完，请下月再试或手动记录"), {
-      status: 429,
-      code: "AI_MONTHLY_BUDGET_EXCEEDED",
-      requestId,
-      retryable: false,
-    });
+    throw Object.assign(
+      new Error(result.quotaExceeded ? "个人 AI 次数已用完，请稍后再试或手动记录" : "本月 AI 预算额度已用完，请下月再试或手动记录"),
+      {
+        status: 429,
+        code: result.quotaExceeded ? "AI_USER_QUOTA_EXCEEDED" : "AI_MONTHLY_BUDGET_EXCEEDED",
+        requestId,
+        retryable: false,
+      },
+    );
   return result;
+}
+
+export function personalBudget(result) {
+  return {
+    month: result.month,
+    remainingRequests: result.userRemainingRequests ?? result.remainingRequests,
+    requests: result.userRequests ?? result.requests,
+    monthlyLimit: result.userMonthlyLimit ?? 20,
+    dailyLimit: result.userDailyLimit ?? 5,
+  };
 }
 
 export async function reportNutritionUsage(requestId, usage) {

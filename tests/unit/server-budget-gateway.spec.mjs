@@ -19,6 +19,14 @@ function setup(key = apiKey) {
 }
 
 describe("authenticated budget gateway", () => {
+  it("forwards bounded personal quota operations without exposing the injected key", async () => {
+    const { handler, fetchImpl } = setup();
+    const payload = { ...operation, p_user_id: "c09e48d0-792e-4bc3-8b24-d1702b39676d", p_monthly_limit: 20, p_daily_limit: 5 };
+    expect((await handler(request(payload))).status).toBe(200);
+    expect(fetchImpl.mock.calls[1][0]).toContain("/rpc/nutrition_budget_for_user");
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual(payload);
+    expect((await handler(request({ ...payload, p_daily_limit: 6 }))).status).toBe(400);
+  });
   it("uses the injected secret internally and exposes only the RPC budget", async () => {
     const { fetchImpl, handler } = setup();
     const result = await handler(request());

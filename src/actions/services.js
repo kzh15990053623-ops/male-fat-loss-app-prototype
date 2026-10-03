@@ -1,4 +1,5 @@
 import { state, runtime } from "../app-state.js";
+import { nativeRuntime } from "../native-runtime.js";
 import { todayKey, motionPreference } from "../app-utils.js";
 import { todayTasks } from "../app-logic.js";
 import {
@@ -72,6 +73,10 @@ function reminderDelayMs() {
 
 export function scheduleLocalReminder() {
   clearTimeout(runtime.reminderTimer);
+  if (nativeRuntime()) {
+    void scheduleNativeReminder();
+    return;
+  }
   if (!state.preferences.pushEnabled) return;
   runtime.reminderTimer = setTimeout(() => {
     const message = "记得补全今天的饮食、训练和体重记录";
@@ -79,6 +84,35 @@ export function scheduleLocalReminder() {
     void showSystemReminder(message);
     scheduleLocalReminder();
   }, reminderDelayMs());
+}
+
+async function scheduleNativeReminder() {
+  const notifications = nativeRuntime()?.LocalNotifications;
+  if (!notifications) return false;
+  try {
+    await notifications.cancel({ notifications: [{ id: 1 }] });
+    if (!state.preferences.pushEnabled) return true;
+    const permission = await notifications.checkPermissions();
+    if (permission.display !== "granted") return false;
+    const [hour, minute] = String(state.preferences.reminderTime || "21:30")
+      .split(":")
+      .map(Number);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
+    await notifications.schedule({
+      notifications: [
+        {
+          id: 1,
+          title: "稳减记录提醒",
+          body: "记得补全今天的饮食、训练和体重记录",
+          schedule: { on: { hour, minute }, allowWhileIdle: true },
+          isExactNotification: false,
+        },
+      ],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function showSystemReminder(message) {
@@ -100,6 +134,18 @@ export async function showSystemReminder(message) {
 
 export async function ensureReminderPermission() {
   if (!state.preferences.pushEnabled) return false;
+  if (nativeRuntime()) {
+    try {
+      const notifications = nativeRuntime().LocalNotifications;
+      const current = await notifications.checkPermissions();
+      const granted = current.display === "granted" ? current : await notifications.requestPermissions();
+      if (granted.display === "granted") return true;
+    } catch {
+      // Manual records remain usable when the operating system denies notifications.
+    }
+    showToast("通知权限未开启，日常记录仍可使用");
+    return false;
+  }
   if (!("Notification" in window)) {
     showToast("此浏览器不支持系统通知，应用打开时仍会提醒");
     return false;
@@ -222,7 +268,8 @@ export function activeDialogElement() {
 
 export function focusSettingsPanel() {
   const dialog = activeDialogElement();
-  if (!dialog) return;
+  // 入场帧可能晚于用户或焦点恢复操作，不能把弹层内的焦点抢回首个按钮。
+  if (!dialog || dialog.contains(document.activeElement)) return;
   const target = getSettingsFocusableElements()[0];
   (target || dialog).focus({ preventScroll: true });
 }

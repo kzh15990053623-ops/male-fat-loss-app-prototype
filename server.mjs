@@ -1,3 +1,5 @@
+import { APP_RELEASE } from "./src/release.js";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { port } from "./server/config.mjs";
@@ -10,6 +12,22 @@ export { isRecord, normalizeAppData, sanitizeMeals, sanitizeState } from "./serv
 
 export function startServer(listenPort = port) {
   return createServer(async (request, response) => {
+    const started = Date.now();
+    const requestId = randomUUID();
+    response.setHeader("X-Request-Id", requestId);
+    response.setHeader("X-App-Version", APP_RELEASE);
+    response.on("finish", () => {
+      if (request.url?.startsWith("/api/") && response.statusCode >= 400)
+        console.warn(
+          JSON.stringify({
+            event: "request_failed",
+            requestId,
+            route: request.url.split("?")[0],
+            status: response.statusCode,
+            durationMs: Date.now() - started,
+          }),
+        );
+    });
     applyHstsHeader(request, response);
     // Parse inside an error boundary: a malformed request-target (e.g.
     // "GET http://[ HTTP/1.1") must answer 400, never crash the process.
@@ -40,7 +58,7 @@ export function startServer(listenPort = port) {
           error: error.message || "Request failed",
           code: error.code || "REQUEST_FAILED",
           retryable: typeof error.retryable === "boolean" ? error.retryable : status >= 500,
-          requestId: error.requestId || null,
+          requestId: error.requestId || requestId,
           ...(error.retryAfter ? { retryAfter: error.retryAfter } : {}),
           ...(error.conflict ? { conflict: error.conflict } : {}),
         },

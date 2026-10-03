@@ -1,7 +1,8 @@
 import { state } from "../app-state.js";
 import { motionPreference } from "../app-utils.js";
+import { nativeRuntime } from "../native-runtime.js";
 import { todayTasks } from "../app-logic.js";
-import { upsertMetricLog, saveStoredState } from "../app-sync.js";
+import { upsertMetricLog, saveStoredState, syncStateNow } from "../app-sync.js";
 import {
   render,
   showToast,
@@ -46,25 +47,35 @@ export function followCoachAction(nextTab) {
   }, 0);
 }
 
-export function saveBodyMetricsFromForm() {
-  const nextWeight = Number(document.querySelector("[data-weight-input]")?.value || state.weight);
-  const nextWaist = Number(document.querySelector("[data-waist-input]")?.value || state.waist);
-  if (!nextWeight || nextWeight < 40 || nextWeight > 200) {
+export async function saveBodyMetricsFromForm() {
+  const weightRaw = document.querySelector("[data-weight-input]")?.value ?? "";
+  const waistRaw = document.querySelector("[data-waist-input]")?.value ?? "";
+  const nextWeight = Number(weightRaw);
+  const nextWaist = waistRaw === "" ? null : Number(waistRaw);
+  if (weightRaw === "" || !Number.isFinite(nextWeight) || nextWeight < 40 || nextWeight > 200) {
     showToast("请输入合理体重");
     return;
   }
-  if (!nextWaist || nextWaist < 50 || nextWaist > 180) {
+  if (nextWaist !== null && (!Number.isFinite(nextWaist) || nextWaist < 50 || nextWaist > 180)) {
     showToast("请输入合理腰围");
     return;
   }
   state.weight = Number(nextWeight.toFixed(1));
   state.weightDraft = state.weight;
-  state.waist = Number(nextWaist.toFixed(1));
-  state.waistDraft = state.waist;
   upsertMetricLog("weightLogs", state.weight);
-  upsertMetricLog("waistLogs", state.waist);
+  if (nextWaist !== null) {
+    state.waist = Number(nextWaist.toFixed(1));
+    if (!state.startWaist) state.startWaist = state.waist;
+    upsertMetricLog("waistLogs", state.waist);
+  }
+  state.waistDraft = "";
   saveStoredState();
-  showToast("今日体重和腰围已更新");
+  if (nativeRuntime() && !(await syncStateNow({ localOnly: true }))) {
+    showToast("手机记录保存失败，请重试");
+    render();
+    return;
+  }
+  showToast(nextWaist === null ? "今日体重已更新" : "今日体重和腰围已更新");
   render();
 }
 

@@ -46,7 +46,7 @@ test("PWA 应用壳安装后可在离线状态重新打开", async ({ page, cont
   await prepareInstalledAppShell(page, "/");
 
   const manifest = await page.evaluate(async () => fetch("/manifest.webmanifest").then((response) => response.json()));
-  expect(manifest).toMatchObject({ display: "standalone", background_color: "#F2F0E9", theme_color: "#102A3A" });
+  expect(manifest).toMatchObject({ display: "standalone", background_color: "#FAF8F5", theme_color: "#FAF8F5" });
   expect(manifest.icons.some((item) => item.sizes === "192x192")).toBe(true);
   expect(manifest.icons.some((item) => item.sizes === "512x512")).toBe(true);
 

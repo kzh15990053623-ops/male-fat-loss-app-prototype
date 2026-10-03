@@ -12,16 +12,16 @@ export function renderTrainingLab() {
   return `
     ${pageHeader("动起来", "本周节奏与今日执行")}
 
-    <section class="training-hero-lab">
+    <section class="training-hero-lab content-section section-overview">
       <div class="training-orbit" aria-hidden="true"><span>${String(todayIndex + 1).padStart(2, "0")}</span><small>/ 07</small></div>
       <div class="training-copy">
         <p class="eyebrow">今天的安排</p>
         <h2>${escapeHtml(todayPlan.focus)}</h2>
-        <p>${escapeHtml(todayPlan.type)} · 为当前目标生成的今日训练建议</p>
+        <p>${escapeHtml(todayPlan.type)} · 固定运动记录示例，可按自身情况选择</p>
         <div class="workout-meta">
           <span>${icon("timer")}${todayPlan.minutes} 分钟</span>
           <span>${icon("flame")}约 ${todayPlan.kcal} kcal</span>
-          <span>${icon("level")}${state.weeklyLossTarget >= 0.7 ? "偏高" : "适中"}</span>
+          <span>${icon("level")}记录示例</span>
         </div>
       </div>
       <div class="training-hero-actions">
@@ -30,9 +30,10 @@ export function renderTrainingLab() {
       </div>
     </section>
 
+    <button class="outline-button" type="button" data-rest-day>${state.restDay ? "今天已记为休息日 · 改为训练日" : "今天休息，也算完成习惯"}</button>
     ${renderWeekTrainingPlan()}
 
-    <details class="activity-capture" open>
+    <details class="activity-capture content-section section-form" open>
       <summary><div><h2>快速记录运动</h2></div><span>预估 <b data-activity-estimate>${draftKcal}</b> kcal</span></summary>
       <div class="activity-form-card">
         <label class="field-label"><span>运动名称</span><input data-activity-name name="activity-name" type="text" maxlength="40" autocomplete="off" placeholder="例如：快走、游泳、篮球…" value="${escapeHtml(state.activityDraft.name)}" /></label>
@@ -51,13 +52,13 @@ export function renderTrainingLab() {
       </div>
     </details>
 
-    <section class="section-block activity-log-card">
+    <section class="section-block activity-log-card content-section section-list">
       <div class="section-title"><div><h2>今日运动记录</h2></div><span>${customBurned()} kcal</span></div>
       ${state.undoActivity ? `<div class="undo-banner" role="status"><span>已删除 ${escapeHtml(state.undoActivity.name)}</span><button type="button" data-undo-activity>撤销</button></div>` : ""}
       <div class="activity-list">${state.customActivities.length ? state.customActivities.map(renderActivity).join("") : renderEmptyState()}</div>
     </section>
 
-    <section class="section-block training-library">
+    <section class="section-block training-library content-section section-list">
       <div class="section-title"><div><h2>训练类型</h2></div><span>${workouts.length} 项</span></div>
       <div class="workout-list">${workouts.map(renderWorkout).join("")}</div>
     </section>
@@ -68,7 +69,7 @@ function renderWeekTrainingPlan() {
   const plan = weeklyTrainingPlan();
   const totalMinutes = plan.reduce((sum, item) => sum + item.minutes, 0);
   return `
-    <section class="week-plan-card">
+    <section class="week-plan-card content-section section-list">
       <div class="section-title">
         <h2>本周训练安排</h2>
         <span>${totalMinutes} 分钟</span>
@@ -80,7 +81,7 @@ function renderWeekTrainingPlan() {
           <article class="week-plan-item ${escapeHtml(item.today ? "today" : "")}">
             <span>周${item.day}</span>
             <div>
-              <strong>${item.type}</strong>
+              <strong>${item.type}${item.today ? '<small class="today-label">今天</small>' : ""}</strong>
               <p>${item.focus} · ${item.minutes} 分钟 · ${item.kcal} kcal</p>
             </div>
           </article>

@@ -1,3 +1,4 @@
+import { supabaseApiHeaders } from "./supabase-headers.mjs";
 import { createHash } from "node:crypto";
 import {
   supabaseAnonKey,
@@ -7,9 +8,17 @@ import {
   supabaseServiceRoleKey,
   supabaseUrl,
 } from "./config.mjs";
-import { defaultData, isRecord, normalizeAppData, sanitizeMeals, stateRevision, stateWriteRevision, storedStateForWrite } from "./data.mjs";
+import {
+  defaultData,
+  isRecord,
+  normalizeAppData,
+  sanitizeMeals,
+  stateRevision,
+  stateWriteRevision,
+  storedStateForWrite,
+  validateStateWrite,
+} from "./data.mjs";
 import { isLocalAccessToken, localAuthService } from "./local-auth.mjs";
-import { supabaseApiHeaders } from "./supabase-headers.mjs";
 
 let authReadinessCache = { key: "", expiresAt: 0, value: null };
 
@@ -385,6 +394,7 @@ export async function writeAppState(payload, accessToken, userId) {
   }
 
   const nextRevision = currentRevision + 1;
+  validateStateWrite(safePayload);
   const updatedAt = new Date().toISOString();
   const data = {
     user_id: userId,
@@ -476,7 +486,7 @@ export async function revokeSupabaseSession(request) {
 }
 
 export function supabaseAccountDeletionAvailable() {
-  return Boolean(supabaseServiceRoleKey) && isSupabaseConfigured();
+  return (Boolean(supabaseServiceRoleKey) || process.env.ACCOUNT_DELETION_GATEWAY_ENABLED === "true") && isSupabaseConfigured();
 }
 
 // Admin API call keyed by the service-role key. Only used for account deletion.
@@ -506,7 +516,17 @@ async function requestSupabaseAdmin(path, { method = "GET" } = {}) {
   }
 }
 
-export async function deleteSupabaseAccount(userId) {
+export async function deleteSupabaseAccount(userId, accessToken = "") {
+  if (!supabaseServiceRoleKey && process.env.ACCOUNT_DELETION_GATEWAY_ENABLED === "true" && accessToken) {
+    const response = await fetch(`${supabaseUrl}/functions/v1/delete-own-account`, {
+      method: "DELETE",
+      headers: supabaseHeaders(accessToken),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok)
+      throw publicAuthError("注销结果暂未确认，请重试或重新登录核实。本机副本暂时保留。", { status: 503, code: "ACCOUNT_DELETION_FAILED" });
+    return;
+  }
   if (!supabaseServiceRoleKey) {
     throw publicAuthError("当前部署未配置 SUPABASE_SERVICE_ROLE_KEY，暂不支持云端账号注销。", {
       status: 503,

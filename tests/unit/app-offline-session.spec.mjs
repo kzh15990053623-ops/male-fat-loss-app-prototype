@@ -241,6 +241,7 @@ describe("offline reconnect and session teardown", () => {
       ),
     );
     const syncing = syncStateNow();
+    await vi.waitFor(() => expect(resolveWrite).toBeTypeOf("function"));
     clearSession();
     storeSession(session("user-b"));
     resetAppData({ blank: true });
