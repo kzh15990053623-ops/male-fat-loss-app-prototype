@@ -637,9 +637,17 @@ async function syncStateNow({ silent = true, localOnly = false } = {}) {
       return locallySaved;
     }
     const creatingAccountState = runtime.stateRevision === 0;
+    let flushAfterMain = creatingAccountState;
     setBackendStatus("saving");
     try {
-      if (!creatingAccountState) await flushHistoryEdits();
+      if (!creatingAccountState) {
+        try {
+          await flushHistoryEdits();
+        } catch (error) {
+          if (error.kind !== "remote-clear") throw error;
+          flushAfterMain = true;
+        }
+      }
       checkSession();
       if (initialLocalWrite.pending) {
         try {
@@ -675,7 +683,7 @@ async function syncStateNow({ silent = true, localOnly = false } = {}) {
         writeStoredPayload(storedPayload());
       }
       checkSession();
-      if (creatingAccountState && (await flushHistoryEdits())) {
+      if (flushAfterMain && (await flushHistoryEdits())) {
         runtime.dirtyBaseRevision = acknowledgement.revision;
         state.syncPending = true;
         setBackendStatus("local");

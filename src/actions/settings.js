@@ -1,5 +1,12 @@
 import { validateStateWrite } from "../state-contract.js";
-import { archiveSnapshot, loadHistoryPage, readLocalHistory, saveHistoryEdit } from "../history-store.js";
+import {
+  archiveSnapshot,
+  loadHistoryPage,
+  readLocalHistory,
+  saveHistoryEdit,
+  prepareHistoryRecovery,
+  restoreHistoryRecovery,
+} from "../history-store.js";
 import { state, runtime, AUTH_EMAIL_KEY, STORAGE_KEY, API_STATE_URL, CURRENT_SCHEMA_VERSION } from "../app-state.js";
 import { todayKey } from "../app-utils.js";
 import { calorieRecommendation, estimateCalorieBudget, recommendedProteinGrams, totalBurned } from "../app-logic.js";
@@ -23,7 +30,7 @@ import {
   saveStoredState,
   syncStateNow,
 } from "../app-sync.js";
-import { migratePayload, createNewUserState, createBlankMeals } from "../app-data.js";
+import { migratePayload, normalizeHistoryRecord, createNewUserState, createBlankMeals } from "../app-data.js";
 import {
   render,
   showToast,
@@ -293,7 +300,14 @@ export async function completeSetupFromForm() {
   render();
 }
 
+function checkBackupSession(userId, generation) {
+  if (!nativeRuntime() && (userId !== runtime.authUserId || generation !== runtime.authSessionGeneration))
+    throw new Error("导出或恢复过程中账号已切换，请在原账号重试");
+}
+
 export async function exportUserData() {
+  const userId = runtime.authUserId;
+  const generation = runtime.authSessionGeneration;
   if (nativeRuntime() && !(await syncStateNow({ localOnly: true }))) {
     showToast("手机记录尚未保存，暂不能导出");
     return false;
@@ -302,6 +316,7 @@ export async function exportUserData() {
     try {
       await archiveSnapshot({ state });
       await loadHistoryPage({ all: true });
+      checkBackupSession(userId, generation);
     } catch (error) {
       showToast(error.message || "完整历史暂时无法读取，请重试导出");
       return false;
@@ -309,7 +324,13 @@ export async function exportUserData() {
   }
   const full = persistedPayload();
   if (!nativeRuntime()) {
-    const history = await readLocalHistory();
+    const history = await readLocalHistory(userId);
+    try {
+      checkBackupSession(userId, generation);
+    } catch (error) {
+      showToast(error.message);
+      return false;
+    }
     full.state.dailyRecords = {
       ...Object.fromEntries(history.filter((row) => row.record).map((row) => [row.date, row.record])),
       ...state.dailyRecords,
@@ -365,18 +386,24 @@ export async function exportUserData() {
 }
 
 export async function importUserData(input) {
+  const userId = runtime.authUserId;
+  const generation = runtime.authSessionGeneration;
   const file = input.files?.[0];
   input.value = "";
   if (!file) return false;
   if (file.size > 8 * 1024 * 1024) return (showToast("备份超过 8MB，请检查文件"), false);
   try {
     const backup = JSON.parse(await file.text());
+    checkBackupSession(userId, generation);
     const raw = backup?.data;
     validateStateWrite(raw);
     if (!nativeRuntime() && backup.user?.id && backup.user.id !== runtime.authUserId)
       throw new Error("此备份属于另一个账号，请登录原账号后恢复");
     const migrated = migratePayload(raw);
     if (!migrated) throw new Error("备份数据无法读取");
+    const pendingHistory = nativeRuntime()
+      ? []
+      : prepareHistoryRecovery(raw.historyPending === undefined ? [] : raw.historyPending, userId, raw.state.calorieBudget);
     const days = Object.keys(raw.state.dailyRecords || {}).length;
     const weights = migrated.state.weightLogs?.length || 0;
     if (
@@ -387,7 +414,13 @@ export async function importUserData(input) {
       return false;
     if (!nativeRuntime()) {
       if (!(await exportUserData())) throw new Error("恢复前备份未完成，未修改当前记录");
-      for (const [date, record] of Object.entries(raw.state.dailyRecords)) await saveHistoryEdit(date, record);
+      checkBackupSession(userId, generation);
+      for (const [date, record] of Object.entries(raw.state.dailyRecords)) {
+        checkBackupSession(userId, generation);
+        await saveHistoryEdit(date, normalizeHistoryRecord(record, date, raw.state.calorieBudget), userId);
+      }
+      await restoreHistoryRecovery(pendingHistory, userId);
+      checkBackupSession(userId, generation);
       const revision = runtime.stateRevision;
       const baseline = runtime.syncBasePayload;
       migrated.revision = revision;

@@ -15,6 +15,7 @@ beforeAll(async () => {
     "202609060001_explicit_app_state_grants.sql",
     "202609210001_nutrition_budget.sql",
     "20261003171922_maturity_user_quota_archive.sql",
+    "202610040001_history_clear_guard.sql",
   ])
     await db.exec(await readFile(new URL(`../../supabase/migrations/${file}`, import.meta.url), "utf8"));
   await db.query("insert into auth.users values ($1),($2)", [a, b]);
@@ -74,10 +75,17 @@ it("archives retained days before snapshot rollover; RLS isolates users and clea
   await db.exec("grant usage on schema auth to authenticated; set role authenticated");
   await db.query("select set_config('app.user_id',$1,false)", [b]);
   expect((await db.query("select * from public.app_daily_records")).rows).toEqual([]);
+
   await db.exec("reset role");
   await db.query("update public.app_states set state=$1::jsonb where user_id=$2", [
     JSON.stringify({ clearedAt: new Date().toISOString() }),
     a,
   ]);
+  expect((await db.query("select * from public.app_daily_records")).rows).toEqual([]);
+  await db.query("select set_config('app.user_id',$1,false)", [a]);
+  const rejected = (
+    await db.query("select public.write_app_day('2020-01-01',$1::jsonb,0) as result", [JSON.stringify({ date: "2020-01-01", weight: 80 })])
+  ).rows[0].result;
+  expect(rejected.cleared).toBe(true);
   expect((await db.query("select * from public.app_daily_records")).rows).toEqual([]);
 });

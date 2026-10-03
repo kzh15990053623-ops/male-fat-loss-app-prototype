@@ -56,6 +56,10 @@ describe("stateWriteRevision 写入版本契约", () => {
       service.writeAppState({ state: { dailyRecords: { [date]: { date, weight: 80 } } }, meals: [], revision: 1 }, userId),
     ).rejects.toMatchObject({ status: 409, conflict: { state: { dailyRecords: { [date]: { weight: 75 } } } } });
     await expect(service.writeHistory(userId, date, { date, weight: 77 }, old.revision)).rejects.toMatchObject({ status: 409 });
+    await service.writeAppState({ state: { clearedAt: new Date().toISOString() }, meals: null, revision: 2 }, userId);
+    await expect(service.writeHistory(userId, date, { date, weight: 77 }, 0)).rejects.toMatchObject({ code: "STATE_CLEARED", status: 409 });
+    expect(await service.readHistory(userId)).toEqual([]);
+    expect((await service.readAppState(userId)).revision).toBe(3);
   });
   it("只接受显式非负整数", () => {
     expect(stateWriteRevision({ revision: 0 })).toEqual({ ok: true, missing: false, revision: 0 });

@@ -35,6 +35,8 @@ export async function handleHistory(request, response, url, auth, { readJsonBody
       accessToken: auth.accessToken,
       body: { p_date: date, p_record: safe, p_revision: revision },
     });
+    if (row.cleared)
+      throw Object.assign(new Error("另一设备已清空档案，请先刷新档案版本"), { status: 409, code: "STATE_CLEARED", conflict: row });
     if (row.conflict)
       throw Object.assign(new Error("此日记录在另一设备发生变化，请在历史页选择保留的内容"), {
         status: 409,

@@ -4,6 +4,7 @@ import { validateStateWrite } from "../../server/data.mjs";
 import { mergePayloads, syncBaseSnapshot, applyDailyRecord } from "../../src/app-data.js";
 import { state, meals, runtime, initialStateSnapshot, initialMealsSnapshot } from "../../src/app-state.js";
 import { preserveUpgradeDraft, restoreUpgradeDraft } from "../../src/app-storage.js";
+import { prepareHistoryRecovery } from "../../src/history-store.js";
 import { calorieBalanceSeries, weeklyActionPlan, estimateCalorieBudget, dailyCalorieEstimate, todayTasks } from "../../src/app-logic.js";
 const entry = (id, calories, known = true) => ({
   id,
@@ -20,6 +21,23 @@ beforeEach(() => {
   meals.splice(0, meals.length, ...structuredClone(initialMealsSnapshot));
 });
 describe("maturity data contracts", () => {
+  it("preserves backup conflict values under the current account and rejects malformed pending records", () => {
+    const rows = [
+      {
+        key: "wrong-account:2020-01-01",
+        date: "2020-01-01",
+        record: { date: "2020-01-01", weight: 75 },
+        revision: 1,
+        conflict: { record: { date: "2020-01-01", weight: 80 }, revision: 2 },
+      },
+    ];
+    const [restored] = prepareHistoryRecovery(rows, "current-account", 1900);
+    expect(restored.key).toBe("current-account:2020-01-01");
+    expect(restored.record.weight).toBe(75);
+    expect(restored.conflict.record.weight).toBe(80);
+    expect(() => prepareHistoryRecovery([{ ...rows[0], revision: "1" }], "current-account", 1900)).toThrow();
+    expect(() => prepareHistoryRecovery([{ ...rows[0], conflict: { record: [], revision: 2 } }], "current-account", 1900)).toThrow();
+  });
   it("keeps known energy separate from unknown macronutrients", () => {
     const food = { ...entry("rice", 500), macros: { protein: 0, carbs: 0, fat: 0 }, macrosKnown: false };
     const meal = summarizeMeal({ id: "lunch", entries: [food] });

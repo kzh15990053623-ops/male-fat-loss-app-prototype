@@ -282,15 +282,7 @@ function migratePayloadCore(rawPayload) {
     Object.fromEntries(
       Object.entries(isPlainRecord(migratedState.dailyRecords) ? migratedState.dailyRecords : {})
         .filter(([, record]) => isPlainRecord(record))
-        .map(([date, record]) => [
-          date,
-          {
-            ...record,
-            date,
-            meals: normalizeMealList(record.meals),
-            calorieBudget: finiteNumber(record.calorieBudget) ? record.calorieBudget : Number(migratedState.calorieBudget || 0),
-          },
-        ]),
+        .map(([date, record]) => [date, normalizeHistoryRecord(record, date, migratedState.calorieBudget)]),
     ),
   );
   return {
@@ -315,6 +307,15 @@ function syncBaseSnapshot(rawPayload) {
     localUpdatedAt: migrated.localUpdatedAt,
     updatedAt: migrated.updatedAt,
     revision: migrated.revision,
+  };
+}
+
+export function normalizeHistoryRecord(record, date, calorieBudget = 0) {
+  return {
+    ...record,
+    date,
+    meals: normalizeMealList(record.meals),
+    calorieBudget: finiteNumber(record.calorieBudget) ? record.calorieBudget : Number(calorieBudget || 0),
   };
 }
 

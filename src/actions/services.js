@@ -412,6 +412,16 @@ export function render() {
     animateHomeCountUps({ force: animateHomeEntry });
     return;
   }
+  // Keep recovery inputs only in the live DOM; background profile reads must
+  // not erase a password midway through typing or persist it to any store.
+  const recoveryForm = runtime.recoveryVerified && root.querySelector("[data-password-recovery]");
+  const recoveryInputs = recoveryForm
+    ? [...recoveryForm.querySelectorAll("input")].map((input) => ({
+        name: input.name,
+        value: input.value,
+        focused: input === document.activeElement,
+      }))
+    : [];
   const settingsPanelState = captureSettingsPanelState(root);
   root.innerHTML = appShell();
   runtime.pendingTabEnter = false;
@@ -420,5 +430,13 @@ export function render() {
   runtime.lastPageHtml = !state.appLoading && !state.authRequired && state.setupCompleted ? renderCurrentPage() : "";
   hydrateDynamicStyles(root);
   restoreSettingsPanelState(root, settingsPanelState);
+  if (runtime.recoveryVerified)
+    for (const previous of recoveryInputs) {
+      const input = root.querySelector(`[data-password-recovery] [name="${previous.name}"]`);
+      if (input) {
+        input.value = previous.value;
+        if (previous.focused) input.focus({ preventScroll: true });
+      }
+    }
   animateHomeCountUps({ force: animateHomeEntry });
 }

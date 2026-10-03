@@ -1,5 +1,6 @@
 // Permanent, account-scoped IndexedDB archive. Each day can be read separately.
-import { normalizeMealList } from "./app-data.js";
+import { normalizeMealList, normalizeHistoryRecord, upsertMetricLog, applyDailyRecord } from "./app-data.js";
+import { validateStateWrite } from "./state-contract.js";
 import { state, runtime } from "./app-state.js";
 import { apiFetch, nativeRuntime } from "./native-runtime.js";
 let queue = Promise.resolve();
@@ -182,6 +183,32 @@ async function persistHistoryRow(userId, row) {
     if (!savedFallback) throw error;
   }
 }
+export function prepareHistoryRecovery(rows, userId, calorieBudget) {
+  if (!Array.isArray(rows)) throw new Error("备份的待同步历史结构无效");
+  return rows.map((row) => {
+    const validateRecord = (record) => validateStateWrite({ state: { dailyRecords: { [row.date]: record } }, meals: [] });
+    const validRevision = (value) => Number.isSafeInteger(value) && value >= 0;
+    if (!row || !validRevision(row.revision === undefined ? 0 : row.revision)) throw new Error("备份的历史版本无效");
+    validateRecord(row.record);
+    if (row.base) validateRecord(row.base);
+    if (row.conflict) {
+      if (!validRevision(row.conflict.revision)) throw new Error("备份的历史冲突版本无效");
+      if (row.conflict.record) validateRecord(row.conflict.record);
+    }
+    return {
+      key: keyFor(userId, row.date),
+      date: row.date,
+      record: normalizeHistoryRecord(row.record, row.date, calorieBudget),
+      revision: row.revision || 0,
+      base: row.base || null,
+      pending: true,
+      ...(row.conflict ? { conflict: structuredClone(row.conflict) } : {}),
+    };
+  });
+}
+export async function restoreHistoryRecovery(rows, userId) {
+  for (const row of rows) await persistHistoryRow(userId, row);
+}
 export function clearHistory(userId = runtime.authUserId) {
   if (userId === runtime.authUserId) {
     runtime.historyRows = [];
@@ -273,6 +300,7 @@ function sameRecord(left, right) {
     value
       ? {
           ...value,
+          updatedAt: undefined,
           customActivities: value.customActivities || [],
           taskOverrides: value.taskOverrides || {},
           workoutDone: Boolean(value.workoutDone),
@@ -300,14 +328,28 @@ export async function flushHistoryEdits() {
       guard();
       if (remote && (sameRecord(remote.record, row.record) || sameRecord(remote.record, row.base))) row.revision = remote.revision;
     }
-    const response = await apiFetch("/api/history", {
-      method: "PUT",
-      headers: requestHeaders,
-      body: JSON.stringify({ date: row.date, record: row.record, revision: row.revision || 0 }),
-    });
-    const data = await response.json();
-    if (userId !== runtime.authUserId || generation !== runtime.authSessionGeneration)
-      throw Object.assign(new Error("账号已切换"), { kind: "stale-session" });
+    const write = () =>
+      apiFetch("/api/history", {
+        method: "PUT",
+        headers: requestHeaders,
+        body: JSON.stringify({ date: row.date, record: row.record, revision: row.revision || 0 }),
+      });
+    let response = await write();
+    let data = await response.json();
+    guard();
+    if (
+      response.status === 409 &&
+      data.code !== "STATE_CLEARED" &&
+      data.conflict &&
+      (sameRecord(data.conflict.record, row.base) || sameRecord(data.conflict.record, row.record))
+    ) {
+      row.revision = data.conflict.revision;
+      response = await write();
+      data = await response.json();
+      guard();
+    }
+    if (response.status === 409 && data.code === "STATE_CLEARED")
+      throw Object.assign(new Error("另一设备已清空档案"), { kind: "remote-clear" });
     if (response.status === 409) {
       await persistHistoryRow(userId, { ...row, conflict: data.conflict });
       runtime.historyConflicts = (await readLocalHistory()).filter((item) => item.conflict);
@@ -352,6 +394,16 @@ export async function resolveHistoryConflict(date, choice) {
     pending: choice !== "remote",
   });
   if (userId !== runtime.authUserId || generation !== runtime.authSessionGeneration) return;
-  if (record) state.dailyRecords[date] = record;
+  if (record) {
+    state.dailyRecords[date] = record;
+    for (const field of ["weight", "waist"]) {
+      state[field + "Logs"] = state[field + "Logs"].filter((item) => item.date !== date);
+      if (typeof record[field] === "number") upsertMetricLog(field + "Logs", record[field], date);
+    }
+    if (date === state.currentDate) applyDailyRecord(record);
+  } else {
+    delete state.dailyRecords[date];
+    for (const field of ["weightLogs", "waistLogs"]) state[field] = state[field].filter((item) => item.date !== date);
+  }
   await loadHistoryPage();
 }

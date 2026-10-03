@@ -1,4 +1,5 @@
 import { state, runtime } from "../app-state.js";
+import { escapeHtml } from "../app-utils.js";
 import { storeSession } from "../app-storage.js";
 import { authHeaders } from "../app-sync.js";
 import { render, showToast } from "./services.js";
@@ -79,5 +80,5 @@ export async function updatePassword(form) {
 }
 
 export function renderPasswordRecovery() {
-  return `<section class="lock-screen"><form class="lock-card" data-password-recovery><h1>设置新密码</h1><p>邮箱身份已确认。修改密码会保留原有健康记录。</p><label class="field-label"><span>新密码</span><input type="password" name="new-password" minlength="8" maxlength="128" autocomplete="new-password" required /></label><label class="field-label"><span>再次输入新密码</span><input type="password" name="confirm-password" minlength="8" maxlength="128" autocomplete="new-password" required /></label><button type="submit" class="complete-button">保存新密码</button></form></section>`;
+  return `<section class="lock-screen"><form class="lock-card" data-password-recovery><h1>设置新密码</h1><p>邮箱身份已确认。修改密码会保留原有健康记录。</p><label class="field-label"><span>新密码</span><input type="password" name="new-password" minlength="8" maxlength="128" autocomplete="new-password" required /></label><label class="field-label"><span>再次输入新密码</span><input type="password" name="confirm-password" minlength="8" maxlength="128" autocomplete="new-password" required /></label><p role="status" data-password-feedback>${escapeHtml(state.toast || "")}</p><button type="submit" class="complete-button">保存新密码</button></form></section>`;
 }

@@ -2,6 +2,65 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { openFreshApp, seedApp, setTab, stateSnapshot } from "../helpers/app-fixture.mjs";
 
+test("导入等待恢复前备份时切换账号，不把原账号备份写入新账号", async ({ page }) => {
+  await openFreshApp(page);
+  await seedApp(page, { variant: "empty", tab: "profile", authenticated: true });
+  const backup = await page.evaluate(async () => ({
+    user: { id: "e2e-user" },
+    data: (await import("/src/app-sync.js")).persistedPayload(),
+  }));
+  let reading;
+  let downloads = 0;
+  page.on("download", () => downloads++);
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.route("**/api/history?limit=*", (route) => {
+    reading = route;
+  });
+  await page
+    .locator("[data-import-backup-file]")
+    .setInputFiles({ name: "account-a.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
+  await expect.poll(() => Boolean(reading)).toBe(true);
+  await page.evaluate(async () => {
+    const { storeSession } = await import("/src/app-storage.js");
+    const { state } = await import("/src/app-state.js");
+    storeSession({ provider: "supabase", accessToken: "account-b-token", user: { id: "account-b" } });
+    state.weight = 66;
+    state.dailyRecords = {};
+  });
+  await reading.fulfill({ json: { rows: [], next: null } });
+  await expect.poll(async () => (await stateSnapshot(page)).state.toast).toContain("恢复前备份未完成");
+  expect((await stateSnapshot(page)).state.weight).toBe(66);
+  expect((await stateSnapshot(page)).state.dailyRecords).toEqual({});
+  expect(downloads).toBe(0);
+  expect(await page.evaluate(async () => (await (await import("/src/history-store.js")).readLocalHistory()).length)).toBe(0);
+});
+
+test("另一设备清空后，待同步历史经过主档案清空合并，旧记录不会复活", async ({ page }) => {
+  await openFreshApp(page);
+  await seedApp(page, { variant: "empty", authenticated: true });
+  const cleared = {
+    state: { schemaVersion: 3, clearedAt: "2026-08-10T00:00:00.000Z", syncRevision: 2 },
+    meals: null,
+    revision: 2,
+    updatedAt: "2026-08-10T00:00:00.000Z",
+  };
+  await page.route("**/api/history?date=*", (route) => route.fulfill({ json: { rows: [] } }));
+  await page.route("**/api/history", (route) => route.fulfill({ status: 409, json: { code: "STATE_CLEARED", conflict: cleared } }));
+  await page.route("**/api/state", (route) => route.fulfill({ status: 409, json: { conflict: cleared } }));
+  const result = await page.evaluate(async () => {
+    const { runtime, state } = await import("/src/app-state.js");
+    const { saveHistoryEdit, readLocalHistory } = await import("/src/history-store.js");
+    const { syncStateNow } = await import("/src/app-sync.js");
+    runtime.stateRevision = 1;
+    runtime.localUpdatedAt = "2026-08-09T00:00:00.000Z";
+    state.dailyRecords["2020-01-01"] = { date: "2020-01-01", weight: 80 };
+    await saveHistoryEdit("2020-01-01", state.dailyRecords["2020-01-01"]);
+    const synced = await syncStateNow();
+    return { synced, archive: await readLocalHistory(), clearedAt: state.clearedAt, revision: runtime.stateRevision };
+  });
+  expect(result).toEqual({ synced: true, archive: [], clearedAt: cleared.state.clearedAt, revision: 2 });
+});
+
 test("IndexedDB 不可用时保留永久归档与待同步修改", async ({ page }) => {
   await openFreshApp(page);
   await seedApp(page, { variant: "empty" });
@@ -33,6 +92,15 @@ test("IndexedDB 不可用时保留永久归档与待同步修改", async ({ page
   expect(conflict.saved.record.weight).toBe(75);
   expect(conflict.resolved).toMatchObject({ record: { weight: 75 }, revision: 2, pending: true });
   expect(conflict.resolved.conflict).toBeUndefined();
+  const adopted = await page.evaluate(async () => {
+    const { state } = await import("/src/app-state.js");
+    state.weightLogs = [{ date: "2020-01-01", value: 75 }];
+    const { flushHistoryEdits, resolveHistoryConflict } = await import("/src/history-store.js");
+    await flushHistoryEdits().catch(() => {});
+    await resolveHistoryConflict("2020-01-01", "remote");
+    return state.weightLogs.find((item) => item.date === "2020-01-01").value;
+  });
+  expect(adopted).toBe(70);
 });
 
 test("完整备份在新账号首次同步后保留 400 天历史和云端版本基线", async ({ page }) => {
@@ -46,6 +114,10 @@ test("完整备份在新账号首次同步后保留 400 天历史和云端版本
     if (route.request().method() === "PUT") {
       const payload = route.request().postDataJSON();
       if (payload.revision !== server.revision) return route.fulfill({ status: 409, json: { conflict: server } });
+      for (const [date, record] of Object.entries(payload.state.dailyRecords)) {
+        if (JSON.stringify(server.state?.dailyRecords?.[date]) !== JSON.stringify(record))
+          history.set(date, { date, record, revision: (history.get(date)?.revision || 0) + 1 });
+      }
       server = { state: payload.state, meals: payload.meals, revision: server.revision + 1, updatedAt };
     }
     await route.fulfill({ json: server });
@@ -67,14 +139,19 @@ test("完整备份在新账号首次同步后保留 400 天历史和云端版本
     return route.fulfill({ json: { rows: date && history.has(date) ? [history.get(date)] : [], next: "" } });
   });
   const backup = await page.evaluate(async () => {
-    const { persistedPayload } = await import("/src/app-sync.js");
+    const { persistedPayload, updateTodayRecord } = await import("/src/app-sync.js");
+    updateTodayRecord();
     const data = persistedPayload();
-    data.state.dailyRecords = Object.fromEntries(
-      Array.from({ length: 400 }, (_, index) => {
-        const date = new Date(Date.UTC(2020, 0, index + 1)).toISOString().slice(0, 10);
-        return [date, { date, weight: 80 + index / 100, intakeStatus: "unknown" }];
-      }),
-    );
+    data.state.dailyRecords = {
+      ...data.state.dailyRecords,
+      ...Object.fromEntries(
+        Array.from({ length: 400 }, (_, index) => {
+          const date = new Date(Date.UTC(2020, 0, index + 1)).toISOString().slice(0, 10);
+          return [date, { date, weight: 80 + index / 100, intakeStatus: "unknown" }];
+        }),
+      ),
+    };
+    data.state.dailyRecords["2026-08-09"].updatedAt = "2026-08-09T00:00:00.000Z";
     return { user: { id: "e2e-user" }, data };
   });
   page.on("dialog", (dialog) => dialog.accept());
@@ -225,11 +302,14 @@ test("归档保留超过近期窗口的完整历史，账号切换隔离，备�
   expect((await stateSnapshot(page)).state.dailyRecords).toEqual(before.state.dailyRecords);
 });
 test("默认邮件回跳清除地址中的凭证并进入密码恢复，不写入登录令牌", async ({ page }) => {
+  let profileRead;
   await page.route("**/api/auth/refresh", (route) => route.fulfill({ status: 204 }));
   await page.route("**/api/auth/callback", (route) =>
     route.fulfill({ json: { provider: "supabase", accessToken: "callback-access", user: { id: "recovery-user" } } }),
   );
-  await page.route("**/api/state", (route) => route.fulfill({ json: { state: null, meals: null, revision: 0 } }));
+  await page.route("**/api/state", (route) => {
+    profileRead = route;
+  });
   await page.route("**/api/readiness*", (route) =>
     route.fulfill({ json: { ok: true, auth: { ready: true, signupAllowed: true, code: "AUTH_READY" } } }),
   );
@@ -241,6 +321,14 @@ test("默认邮件回跳清除地址中的凭证并进入密码恢复，不写�
   );
   await page.route("**/api/auth/password", (route) => route.fulfill({ json: { ok: true } }));
   await page.locator('[name="new-password"]').fill("NewPassword123");
+  await expect.poll(() => Boolean(profileRead)).toBe(true);
+  await profileRead.fulfill({ json: { state: null, meals: null, revision: 0 } });
+  await expect.poll(() => page.evaluate(async () => (await import("/src/app-state.js")).runtime.offlineSyncReadRequired)).toBe(false);
+  await expect(page.locator('[name="new-password"]')).toHaveValue("NewPassword123");
+  await page.locator('[name="confirm-password"]').fill("DifferentPassword123");
+  await page.locator("[data-password-recovery] button").click();
+  await expect(page.locator("[data-password-feedback]")).toContainText("两次密码不一致");
+  await expect(page.locator('[name="new-password"]')).toHaveValue("NewPassword123");
   await page.locator('[name="confirm-password"]').fill("NewPassword123");
   await page.locator("[data-password-recovery] button").click();
   await expect(page.locator("[data-password-recovery]")).toHaveCount(0);

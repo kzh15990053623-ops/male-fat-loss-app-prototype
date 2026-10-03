@@ -354,6 +354,13 @@ export function createLocalAuthService({ filePath = localAuthDataPath, enabled =
     return mutateStore((store) => {
       const user = store.users[userId];
       if (!user) throw localAuthError("账号不存在", { status: 404 });
+      if (!user.state) throw localAuthError("请先建立档案", { status: 400 });
+      if (user.state.clearedAt)
+        throw Object.assign(new Error("档案已清空，请先刷新版本"), {
+          status: 409,
+          code: "STATE_CLEARED",
+          conflict: { state: user.state, meals: user.meals, revision: stateRevision(user.state), updatedAt: user.updatedAt },
+        });
       user.history ||= {};
       const current = user.history[date];
       if ((current?.revision || 0) !== revision)
