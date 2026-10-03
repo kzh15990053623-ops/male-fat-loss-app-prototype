@@ -1,6 +1,8 @@
 import { state, meals, activityTypes } from "./app-state.js";
 import { icon, avg, isPlainRecord, timestampMs, todayKey } from "./app-utils.js";
 import { normalizeMetricLogs } from "./app-data.js";
+import { numericSettingFields } from "./settings-fields.js";
+import { completeMacros, completeIntake, hasRecordedMeal, summarizeMeal } from "./meal-entries.js";
 
 // 纯派生：同步状态 → 展示文案。渲染层只消费 state（的派生），不依赖同步层。
 function backendStatusText() {
@@ -17,7 +19,7 @@ function backendStatusText() {
 }
 
 function totalIntake() {
-  return meals.reduce((sum, meal) => sum + meal.calories, 0);
+  return recordIntake({ meals });
 }
 
 function customBurned() {
@@ -83,7 +85,10 @@ function dailyRecordEntries(limit = 7) {
 
 function recordIntake(record) {
   if (!Array.isArray(record?.meals)) return 0;
-  return record.meals.reduce((sum, meal) => sum + Math.max(0, Number(meal?.calories || 0)), 0);
+  return record.meals.reduce(
+    (sum, meal) => sum + Math.max(0, Number((Array.isArray(meal?.entries) ? summarizeMeal(meal).calories : meal?.calories) || 0)),
+    0,
+  );
 }
 
 function recordBurned(record) {
@@ -146,7 +151,7 @@ function computeStreak(dailyRecords, today = todayKey()) {
 
 function calorieBalanceSeries(limit = 7) {
   return dailyRecordEntries(limit)
-    .filter(({ record }) => hasDailyRecordData(record))
+    .filter(({ record }) => completeIntake(record))
     .map(({ date, record }) => ({
       date,
       value: Number(record.calorieBudget || state.calorieBudget || 0) - recordIntake(record),
@@ -155,45 +160,34 @@ function calorieBalanceSeries(limit = 7) {
 
 function burnedSeries(limit = 7) {
   return dailyRecordEntries(limit)
-    .filter(({ record }) => hasDailyRecordData(record))
+    .filter(({ record }) => recordBurned(record) > 0 || record.restDay)
     .map(({ date, record }) => ({ date, value: recordBurned(record) }));
 }
 
+function recordActionCompletion(record) {
+  const targets = record?.habitTargets || { water: state.waterTarget, steps: state.stepsTarget, sleep: state.sleepTarget || 7 };
+  const checks = {
+    训练: Boolean(record?.restDay || record?.workoutDone) || recordBurned(record) > 0,
+    喝水: Number(record?.waterMl || 0) >= targets.water,
+    步数: Number(record?.steps || 0) >= targets.steps,
+    睡眠: Number(record?.sleep || 0) >= targets.sleep,
+    饮食记录: completeIntake(record),
+  };
+  const completed = Object.entries(checks).filter(([label, done]) => record?.taskOverrides?.[label] ?? done).length;
+  return {
+    completed,
+    hasAction:
+      Boolean(record?.restDay || record?.workoutDone) ||
+      (record?.meals || []).some(hasRecordedMeal) ||
+      recordBurned(record) > 0 ||
+      ["waterMl", "steps", "sleep"].some((key) => Number(record?.[key]) > 0) ||
+      Object.values(record?.taskOverrides || {}).some(Boolean),
+  };
+}
 function completionSeries(limit = 7) {
   return dailyRecordEntries(limit)
-    .filter(({ record }) => hasDailyRecordData(record))
-    .map(({ date, record }) => {
-      const mealsDone = Array.isArray(record.meals) ? record.meals.filter((meal) => Number(meal?.calories || 0) > 0).length : 0;
-      const completed = [
-        Boolean(record.workoutDone) || recordBurned(record) > 0,
-        Number(record.waterMl || 0) >= state.waterTarget,
-        Number(record.steps || 0) >= state.stepsTarget,
-        Number(record.sleep || 0) >= 7,
-        mealsDone >= 3,
-      ].filter(Boolean).length;
-      return { date, value: Math.round((completed / 5) * 100) };
-    });
-}
-
-function recordActionCompletion(record) {
-  const mealsDone = Array.isArray(record?.meals) ? record.meals.filter((meal) => Number(meal?.calories || 0) > 0).length : 0;
-  const burned = recordBurned(record);
-  const completed = [
-    Boolean(record?.workoutDone) || burned > 0,
-    Number(record?.waterMl || 0) >= state.waterTarget,
-    Number(record?.steps || 0) >= state.stepsTarget,
-    Number(record?.sleep || 0) >= 7,
-    mealsDone >= 3,
-  ].filter(Boolean).length;
-  const hasAction =
-    mealsDone > 0 ||
-    burned > 0 ||
-    Number(record?.waterMl || 0) > 0 ||
-    Number(record?.steps || 0) > 0 ||
-    Number(record?.sleep || 0) > 0 ||
-    Boolean(record?.workoutDone) ||
-    Object.values(isPlainRecord(record?.taskOverrides) ? record.taskOverrides : {}).some(Boolean);
-  return { completed, hasAction };
+    .filter(({ record }) => recordActionCompletion(record).hasAction)
+    .map(({ date, record }) => ({ date, value: Math.round((recordActionCompletion(record).completed / 5) * 100) }));
 }
 
 function weeklyCompletionSummary(referenceDate = state.currentDate || todayKey()) {
@@ -225,6 +219,8 @@ function weeklyCompletionSummary(referenceDate = state.currentDate || todayKey()
 }
 
 function reviewSummary() {
+  if (!completeIntake({ intakeStatus: state.intakeStatus, meals }) || !completeMacros(meals))
+    return { score: 0, title: "记录待补全", good: [], todo: ["请补齐饮食并确认今天已记录完整，再查看营养复盘。"] };
   const macros = macrosTotal();
   const proteinRate = Math.round((macros.protein / state.proteinTarget) * 100);
   const tasksDone = todayTasks().filter((task) => task.done).length;
@@ -239,7 +235,7 @@ function reviewSummary() {
   else todo.push(`已超预算 ${Math.abs(remaining)} kcal`);
 
   if (customBurned() > 0) good.push("今日已有运动记录");
-  else todo.push("补一段 20 分钟快走");
+  else todo.push("运动或休息状态尚未记录");
 
   return {
     score: Math.min(100, Math.round((tasksDone / 5) * 55 + Math.min(45, proteinRate * 0.25 + (remaining >= 0 ? 15 : 0)))),
@@ -250,46 +246,23 @@ function reviewSummary() {
 }
 
 function coachPlan() {
-  const macros = macrosTotal();
-  const remaining = remainingCalories();
-  const proteinGap = Math.max(0, state.proteinTarget - macros.protein);
-  const waterGap = Math.max(0, state.waterTarget - state.waterMl);
-  const stepsGap = Math.max(0, state.stepsTarget - state.steps);
-  const activityMinutes = state.customActivities.reduce((sum, item) => sum + item.minutes, 0);
-  const dinnerMissing = meals.some((meal) => meal.id === "dinner" && meal.calories === 0);
-  const dinnerTarget = remaining < 550 ? Math.max(280, remaining - 80) : Math.max(420, Math.min(650, remaining - 180));
-  const actions = [];
-  const risks = [];
-
-  if (proteinGap > 20) actions.push(`优先补 ${proteinGap}g 蛋白，选瘦肉、鱼虾、蛋或豆制品`);
-  if (dinnerMissing) actions.push(`晚餐控制在约 ${dinnerTarget} kcal，主食半份，蔬菜加量`);
-  if (activityMinutes < 30) actions.push("补 20-30 分钟低冲击有氧，优先快走或椭圆机");
-  if (waterGap > 0) actions.push(`再喝 ${Math.ceil(waterGap / 100) * 100}ml 水，避免晚间集中补水`);
-  if (stepsGap > 0) actions.push(`还差 ${stepsGap} 步，饭后走 15 分钟更稳`);
-  if (!actions.length) actions.push("今天执行质量不错，保持记录完整，晚间避免额外加餐");
-
-  if (remaining < 250) risks.push("剩余热量偏紧，避免坚果、酒精和甜饮");
-  if (state.sleep < 6.5) risks.push("睡眠偏少，今晚训练强度建议下调");
-  if (macros.fat > 55) risks.push("脂肪摄入偏高，下一餐减少油脂和酱料");
-  if (!risks.length) risks.push("风险较低，按计划完成剩余记录即可");
-
-  let focus = "保持节奏";
-  if (proteinGap > 25) focus = "补足蛋白";
-  else if (activityMinutes < 30) focus = "补运动量";
-  else if (remaining < 350) focus = "收口控热量";
-
+  const complete = completeIntake({ intakeStatus: state.intakeStatus, meals }) && completeMacros(meals);
   return {
-    focus,
-    actions: actions.slice(0, 3),
-    risks: risks.slice(0, 2),
-    proteinGap,
-    remaining,
-    activityMinutes,
+    focus: complete ? "回看真实记录" : "先补齐记录",
+    actions: complete
+      ? ["回顾食物、份量和保存的预算", "根据感受安排习惯，预算调整在设置中由你确认"]
+      : ["记录实际吃过的食物，未知营养可稍后补充", "确认今天的饮食记录是否完整"],
+    risks: complete ? ["单日数据不用于自动减餐或增加运动"] : ["记录不完整时暂不判断摄入是否合适"],
+    proteinGap: complete ? Math.max(0, state.proteinTarget - macrosTotal().protein) : null,
+    remaining: remainingCalories(),
+    activityMinutes: state.customActivities.reduce((sum, item) => sum + Number(item.minutes || 0), 0),
   };
 }
 
 function targetEta() {
-  if (!state.weight || !state.targetWeight || state.targetWeight >= state.weight || !state.weeklyLossTarget) return "待完善目标";
+  if (!state.weight || !state.targetWeight) return "待完善目标";
+  if (state.weight <= state.targetWeight || state.user.goalMode === "maintain") return "已达到目标 · 进入维持阶段";
+  if (!state.weeklyLossTarget) return "待完善目标";
   const remainingKg = Math.max(0, state.weight - state.targetWeight);
   if (!remainingKg) return "已达到目标";
   const weeks = Math.ceil(remainingKg / Math.max(0.1, state.weeklyLossTarget || 0.6));
@@ -306,18 +279,22 @@ function bmi() {
 
 function healthGuardrails() {
   const bmiValue = Number(bmi());
-  if (!Number.isFinite(bmiValue) || !state.waist || !state.user.height || !state.user.bmr) return [];
-  const waistToHeight = Number((state.waist / state.user.height).toFixed(2));
-  const calorieRatio = Number((state.user.dailyCalories / state.user.bmr).toFixed(2));
+  if (!Number.isFinite(bmiValue) || !state.user.height || !state.user.bmr || !state.user.dailyCalories) return [];
+  const estimate = dailyCalorieEstimate();
+  if (!estimate) return [];
+  const calorieRatio = Number((state.user.dailyCalories / estimate.bmr).toFixed(2));
   const items = [];
 
-  items.push({
-    label: "腰高比",
-    value: waistToHeight,
-    status: waistToHeight >= 0.58 ? "偏高" : waistToHeight >= 0.52 ? "需关注" : "良好",
-    tone: waistToHeight >= 0.58 ? "warn" : waistToHeight >= 0.52 ? "mid" : "good",
-    note: waistToHeight >= 0.52 ? "优先关注腰围下降，不只盯体重。" : "腰围风险较低，继续保持记录。",
-  });
+  if (state.waist > 0) {
+    const waistToHeight = Number((state.waist / state.user.height).toFixed(2));
+    items.push({
+      label: "腰高比",
+      value: waistToHeight,
+      status: waistToHeight >= 0.58 ? "偏高" : waistToHeight >= 0.52 ? "需关注" : "良好",
+      tone: waistToHeight >= 0.58 ? "warn" : waistToHeight >= 0.52 ? "mid" : "good",
+      note: waistToHeight >= 0.52 ? "优先关注腰围下降，不只盯体重。" : "腰围风险较低，继续保持记录。",
+    });
+  }
 
   items.push({
     label: "热量下限",
@@ -356,14 +333,41 @@ function recommendedProteinGrams(weight) {
   return Math.max(80, Math.min(220, Math.round(value * 1.8)));
 }
 
+function estimateCalorieBudget({ height, age, weight, weeklyLoss, formula = "male", activityLevel = "", goalMode = "loss" }) {
+  const values = { height: Number(height), age: Number(age), weight: Number(weight), weeklyLoss: Number(weeklyLoss) };
+  if (
+    Object.entries(values).some(
+      ([key, value]) => !Number.isFinite(value) || value < numericSettingFields[key].min || value > numericSettingFields[key].max,
+    )
+  )
+    return null;
+  if (!["male", "female"].includes(formula)) return null;
+  const bmr = Math.round(10 * values.weight + 6.25 * values.height - 5 * values.age + (formula === "female" ? -161 : 5));
+  const activityFactor = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725 }[activityLevel] || 1.375;
+  const dailyDeficit = goalMode === "maintain" ? 0 : Math.round((values.weeklyLoss * 7700) / 7);
+  const tdee = Math.round(bmr * activityFactor);
+  return { bmr, activityFactor, dailyDeficit, tdee, suggested: Math.max(1400, Math.min(2800, tdee - dailyDeficit)) };
+}
+
+function dailyCalorieEstimate() {
+  return estimateCalorieBudget({
+    height: state.user.height,
+    age: state.user.age,
+    weight: state.weight,
+    weeklyLoss: state.weeklyLossTarget,
+    activityKcal: totalBurned(),
+    formula: state.user.formula || "manual",
+    activityLevel: state.user.activityLevel || "light",
+    goalMode: state.user.goalMode || "loss",
+  });
+}
+
 function calorieRecommendation() {
-  if (!state.user.bmr || !state.user.dailyCalories) {
+  const estimate = dailyCalorieEstimate();
+  if (!estimate || !state.user.dailyCalories) {
     return { tdee: 0, suggested: 0, diff: 0, label: "待完善基础信息", note: "完成目标设置后再生成预算建议。" };
   }
-  const activityFactor = totalBurned() > 650 ? 1.52 : totalBurned() > 450 ? 1.45 : 1.38;
-  const dailyDeficit = Math.round((Math.max(0.1, state.weeklyLossTarget || 0.6) * 7700) / 7);
-  const tdee = Math.round(state.user.bmr * activityFactor);
-  const suggested = Math.max(1400, Math.min(2800, tdee - dailyDeficit));
+  const { tdee, suggested } = estimate;
   const diff = suggested - state.user.dailyCalories;
   return {
     tdee,
@@ -374,8 +378,8 @@ function calorieRecommendation() {
       Math.abs(diff) < 80
         ? "按当前体重和活动量，可以继续观察 7 天体重均值。"
         : diff > 0
-          ? "预算过低容易影响坚持，建议略微上调并保证蛋白。"
-          : "预算偏松时要看晚餐和加餐，先减少精制碳水和油脂。",
+          ? "估算范围高于当前预算。请核对资料和自身感受，调整由你确认。"
+          : "这是估算范围与当前预算的差异。先核对资料和完整记录，再决定是否调整。",
   };
 }
 
@@ -386,12 +390,12 @@ function estimateCalories(type, minutes) {
 
 function todayTasks() {
   const activityMinutes = state.customActivities.reduce((sum, item) => sum + item.minutes, 0);
-  const mealsDone = meals.filter((meal) => meal.calories > 0).length;
+  const mealsDone = meals.filter(hasRecordedMeal).length;
   return [
     {
       label: "训练",
-      value: activityMinutes > 0 ? `${activityMinutes} 分钟已记录` : "30 分钟",
-      done: state.workoutDone || activityMinutes > 0,
+      value: state.restDay ? "休息日已记录" : activityMinutes > 0 ? `${activityMinutes} 分钟已记录` : "30 分钟",
+      done: state.restDay || state.workoutDone || activityMinutes > 0,
       icon: icon("dumbbell"),
     },
     {
@@ -401,51 +405,31 @@ function todayTasks() {
       icon: icon("water"),
     },
     { label: "步数", value: `${state.steps} / ${state.stepsTarget}`, done: state.steps >= state.stepsTarget, icon: icon("steps") },
-    { label: "睡眠", value: state.sleep ? `${state.sleep} 小时` : "待记录", done: state.sleep >= 7, icon: icon("moon") },
-    { label: "饮食记录", value: `${mealsDone} / 4 餐`, done: mealsDone === 4, icon: icon("fork") },
+    {
+      label: "睡眠",
+      value: state.sleep ? `${state.sleep} 小时` : "待记录",
+      done: state.sleep >= (state.sleepTarget || 7),
+      icon: icon("moon"),
+    },
+    {
+      label: "饮食记录",
+      value: `${mealsDone} 餐 · ${state.intakeStatus === "complete" ? "已确认完整" : "待确认"}`,
+      done: state.intakeStatus === "complete",
+      icon: icon("fork"),
+    },
   ].map((task) => ({ ...task, done: state.taskOverrides[task.label] ?? task.done }));
 }
 
 function aiDietAdvice() {
-  const macros = macrosTotal();
-  const proteinGap = Math.max(0, state.proteinTarget - macros.protein);
-  const intake = totalIntake();
-  const remaining = remainingCalories();
-  const dinnerMissing = meals.some((meal) => meal.id === "dinner" && meal.calories === 0);
-  const carbRatio = macros.carbs / Math.max(1, macros.carbs + macros.protein + macros.fat);
-  const advice = [];
-
-  if (proteinGap > 25) {
-    advice.push(`蛋白质还差 ${proteinGap}g，晚餐优先选鸡胸、鱼虾、瘦牛肉或豆腐，避免只吃主食。`);
-  } else {
-    advice.push("蛋白质进度不错，晚餐保持一份优质蛋白即可，不需要额外加大份量。");
-  }
-
-  if (dinnerMissing) {
-    advice.push(`当前还剩 ${remaining} kcal，晚餐建议控制在 520-650 kcal，并把蔬菜体积做足。`);
-  } else if (remaining < 350) {
-    advice.push("剩余热量偏紧，后续只保留无糖饮品或少量高蛋白加餐。");
-  }
-
-  if (carbRatio > 0.48) {
-    advice.push("碳水占比偏高，下一餐减少精制米面，换成半份粗粮或根茎类。");
-  }
-
-  if (intake < state.calorieBudget * 0.65) {
-    advice.push("摄入偏低时别硬扛，优先补蛋白和蔬菜，避免夜间报复性进食。");
-  }
-
-  return advice.slice(0, 3);
+  if (!completeIntake({ intakeStatus: state.intakeStatus, meals }))
+    return ["饮食记录尚未确认完整，营养建议暂不生成。", "未知营养可以稍后补充，先保留真实食物记录。"];
+  return ["今天的饮食已经确认完整，可以回看食物与份量。", "单日摄入与预算的差不代表实际热量缺口，也不需要自动减餐或加练。"];
 }
 
 function mealPlateOptions() {
-  const macros = macrosTotal();
-  const remaining = remainingCalories();
-  const proteinGap = Math.max(0, state.proteinTarget - macros.protein);
-  const baseCalories = Math.max(320, Math.min(680, remaining - 120));
-  const lowCarbCalories = Math.max(360, Math.min(620, baseCalories));
-  const snackCalories = Math.max(180, Math.min(340, proteinGap > 25 ? 280 : 220));
-  const trainingCalories = Math.max(420, Math.min(700, baseCalories + 80));
+  const lowCarbCalories = 414;
+  const snackCalories = 238;
+  const trainingCalories = 514;
 
   return [
     {
@@ -454,7 +438,7 @@ function mealPlateOptions() {
       subtitle: "适合晚餐未记录或剩余热量偏紧",
       food: "瘦牛肉150g、绿叶菜300g、半份糙米饭",
       calories: lowCarbCalories,
-      protein: Math.max(38, Math.min(58, proteinGap + 16)),
+      protein: 38,
       carbs: 34,
       fat: 14,
       amount: 450,
@@ -466,7 +450,7 @@ function mealPlateOptions() {
       subtitle: "适合蛋白还差较多但不想吃太撑",
       food: "无糖酸奶200g、乳清蛋白半份、蓝莓",
       calories: snackCalories,
-      protein: Math.max(26, Math.min(42, proteinGap)),
+      protein: 26,
       carbs: 20,
       fat: 6,
       amount: 260,
@@ -547,7 +531,7 @@ function dietScenarios() {
 }
 
 function weeklyTrainingPlan() {
-  const highTarget = (state.weeklyLossTarget || 0.6) >= 0.7;
+  const highTarget = false;
   const plan = [
     { day: "一", type: "力量塑形", minutes: 38, focus: "上肢推拉", kcal: estimateCalories("力量塑形", 38) },
     {
@@ -581,7 +565,7 @@ function trendInsight(weights, balanceValues, burnedValues) {
   const items = [];
 
   if (!hasWeightTrend) items.push("至少记录 2 次体重后，才能判断真实变化趋势。");
-  else if (weightDelta <= -0.6) items.push("体重均值正在下降，保持当前饮食与训练节奏。");
+  else if (weightDelta <= -0.6) items.push("记录区间的体重正在下降，保持当前饮食与训练节奏。");
   else if (weightDelta < 0) items.push("体重缓慢下降，先持续记录，不急着进一步压低摄入。");
   else items.push("体重暂未下降，优先补齐连续饮食记录再调整预算。");
 
@@ -603,75 +587,23 @@ function trendInsight(weights, balanceValues, burnedValues) {
   };
 }
 
-function weeklyActionPlan(weights, balanceValues, burnedValues) {
-  const insight = trendInsight(weights, balanceValues, burnedValues);
-  const waists = waistSeries().map((item) => item.value);
-  const waistDelta = waists.length > 1 ? Number((waists.at(-1) - waists[0]).toFixed(1)) : 0;
-  const actions = [];
-
-  if (!insight.hasEnoughData) {
-    return [
-      {
-        id: "build-baseline",
-        title: "先建立真实基线",
-        meta: "连续记录 3 天",
-        detail: "完成体重、饮食和活动记录后，再生成下周调整建议。",
-        target: "home",
-      },
-    ];
-  }
-
-  if (burnedValues.length && insight.avgBurned < 180) {
-    actions.push({
-      id: "more-cardio",
-      title: "增加有氧",
-      meta: "下周 +2 次 30 分钟",
-      detail: "把快走、椭圆机或慢跑安排到工作日晚上，优先补足运动消耗。",
-      target: "training",
-    });
-  }
-
-  if (balanceValues.length && (insight.avgBalance < 0 || insight.weightDelta > -0.3)) {
-    actions.push({
-      id: "tighten-dinner",
-      title: "收紧晚餐",
-      meta: "晚餐 520 kcal 内",
-      detail: "主食半份，蛋白足量，减少油脂和酱料，先连续执行 3 天。",
+function weeklyActionPlan(weights, balanceValues) {
+  return [
+    {
+      id: "build-baseline",
+      title: balanceValues.length ? "回看真实记录" : "先补齐饮食记录",
+      meta: "按实际日期复盘",
+      detail: "确认完整记录后查看趋势；预算调整由你主动确认。",
       target: "diet",
-    });
-  }
-
-  if (completionSeries().length && insight.completion < 80) {
-    actions.push({
-      id: "habit-floor",
-      title: "降低执行门槛",
-      meta: "每天只守 3 件事",
-      detail: "饮食记录、饮水、步数先稳定，训练可以用低冲击有氧替代。",
-      target: "home",
-    });
-  }
-
-  if (waists.length >= 2 && waistDelta > -0.8) {
-    actions.push({
-      id: "waist-focus",
-      title: "腰围优先",
-      meta: "每周量 3 次",
-      detail: "腰围下降慢时先控晚餐碳水和酒精，体重波动不用过度反应。",
-      target: "profile",
-    });
-  }
-
-  if (!actions.length) {
-    actions.push({
+    },
+    {
       id: "keep-course",
-      title: "维持计划",
-      meta: "不急着加码",
-      detail: "趋势可用，下周保持当前热量预算和训练结构，观察腰围均值。",
-      target: "home",
-    });
-  }
-
-  return actions.slice(0, 3);
+      title: state.weight <= state.targetWeight && state.targetWeight > 0 ? "进入维持阶段" : "保持记录习惯",
+      meta: weights.length < 2 ? "继续建立基线" : "观察记录区间",
+      detail: "单次体重变化不直接触发减餐或增加训练。",
+      target: "profile",
+    },
+  ];
 }
 
 export {
@@ -699,6 +631,8 @@ export {
   targetEta,
   bmi,
   healthGuardrails,
+  estimateCalorieBudget,
+  dailyCalorieEstimate,
   calorieRecommendation,
   recommendedProteinGrams,
   estimateCalories,

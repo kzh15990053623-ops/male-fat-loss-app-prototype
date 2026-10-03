@@ -40,6 +40,13 @@ beforeEach(() => {
 });
 
 describe("app storage", () => {
+  it("preserves damaged account cache before replacing it with a recovered snapshot", () => {
+    const key = storageKeyFor();
+    values.set(key, '{"broken');
+    expect(writeStoredPayload({ state: { weight: 80 }, meals: [] })).toEqual({ ok: true });
+    expect(values.get(key + ":damaged")).toBe('{"broken');
+    expect(JSON.parse(values.get(key)).state.weight).toBe(80);
+  });
   it("round-trips revision and explicit timestamps without inventing time", () => {
     const payload = {
       state: { schemaVersion: 3, setupCompleted: true, dailyRecords: {} },
@@ -71,11 +78,11 @@ describe("app storage", () => {
     expect(runtime.loadedLegacyStorageKey).toBe("");
   });
 
-  it("removes malformed JSON and records storage failures", () => {
+  it("preserves malformed JSON for recovery and records storage failures", () => {
     const key = storageKeyFor();
     values.set(key, "{bad-json");
     expect(parseStoredValue(key)).toBe(null);
-    expect(values.has(key)).toBe(false);
+    expect(values.has(key)).toBe(true);
 
     globalThis.localStorage.setItem = () => {
       throw new DOMException("full", "QuotaExceededError");

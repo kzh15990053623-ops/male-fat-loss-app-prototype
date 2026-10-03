@@ -7,6 +7,7 @@ import {
   computeStreak,
   customBurned,
   estimateCalories,
+  estimateCalorieBudget,
   fatLossProgress,
   hasDailyRecordData,
   healthGuardrails,
@@ -102,6 +103,15 @@ describe("蛋白质推荐", () => {
 });
 
 describe("热量预算建议", () => {
+  it("首次建档无需已保存的热量预算即可估算", () => {
+    expect(estimateCalorieBudget({ height: 180, age: 29, weight: 80, weeklyLoss: 0.5 })).toMatchObject({
+      bmr: 1785,
+      tdee: 2454,
+      suggested: 1904,
+    });
+    expect(estimateCalorieBudget({ height: 180, age: 29, weight: 80, weeklyLoss: 2.5 })).toBeNull();
+  });
+
   it("基础信息缺失时不给建议", () => {
     const result = calorieRecommendation();
     expect(result.tdee).toBe(0);
@@ -110,28 +120,31 @@ describe("热量预算建议", () => {
   });
 
   it("按活动系数推导 TDEE 并扣减每日缺口", () => {
-    state.user = { height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
+    state.weight = 86.4;
+    state.user = { formula: "male", activityLevel: "light", height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
     state.weeklyLossTarget = 0.6;
     const result = calorieRecommendation();
-    expect(result.tdee).toBe(2509);
-    expect(result.suggested).toBe(1849);
-    expect(result.diff).toBe(-31);
+    expect(result.tdee).toBe(2492);
+    expect(result.suggested).toBe(1832);
+    expect(result.diff).toBe(-48);
     expect(result.label).toBe("当前热量合适");
   });
 
-  it("运动消耗提高活动系数，预算偏低时提示上调", () => {
-    state.user = { height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
+  it("运动消耗不改变已选择的日常活动系数", () => {
+    state.weight = 86.4;
+    state.user = { formula: "male", activityLevel: "light", height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
     state.weeklyLossTarget = 0.6;
     state.customActivities = [{ kcal: 700 }];
     const result = calorieRecommendation();
-    expect(result.tdee).toBe(2763);
-    expect(result.suggested).toBe(2103);
-    expect(result.diff).toBe(223);
-    expect(result.label).toBe("当前略偏低");
+    expect(result.tdee).toBe(2492);
+    expect(result.suggested).toBe(1832);
+    expect(result.diff).toBe(-48);
+    expect(result.label).toBe("当前热量合适");
   });
 
   it("建议热量受 1400 下限保护", () => {
-    state.user = { height: 165, age: 28, bmr: 1200, dailyCalories: 1400 };
+    state.weight = 86.4;
+    state.user = { formula: "male", activityLevel: "light", height: 165, age: 28, bmr: 1200, dailyCalories: 1400 };
     state.weeklyLossTarget = 1.0;
     const result = calorieRecommendation();
     expect(result.suggested).toBe(1400);
@@ -163,6 +176,7 @@ describe("今日任务", () => {
     meals.forEach((meal) => {
       meal.calories = 500;
     });
+    state.intakeStatus = "complete";
     state.waterMl = 2400;
     state.steps = 9000;
     state.sleep = 7.5;
@@ -181,6 +195,7 @@ describe("今日任务", () => {
 function record(overrides = {}) {
   return {
     date: "2026-08-24",
+    intakeStatus: "complete",
     meals: [],
     waterMl: 0,
     steps: 0,
@@ -343,7 +358,7 @@ describe("趋势洞察", () => {
     expect(insight.hasEnoughData).toBe(true);
     expect(insight.weightDelta).toBe(-0.7);
     expect(insight.avgBalance).toBe(25);
-    expect(insight.items[0]).toContain("体重均值正在下降");
+    expect(insight.items[0]).toContain("记录区间的体重正在下降");
     expect(insight.items[1]).toBe("平均保留 25 kcal，避免为了数字长期摄入过低。");
   });
 
@@ -368,7 +383,8 @@ describe("趋势洞察", () => {
 
 describe("身体指标", () => {
   it("BMI 按身高体重计算", () => {
-    state.user = { height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
+    state.weight = 86.4;
+    state.user = { formula: "male", activityLevel: "light", height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
     state.weight = 86.4;
     expect(bmi()).toBe("27.3");
   });
@@ -379,25 +395,27 @@ describe("身体指标", () => {
   });
 
   it("健康护栏输出腰高比、热量下限与减重速度", () => {
-    state.user = { height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
+    state.weight = 86.4;
+    state.user = { formula: "male", activityLevel: "light", height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
     state.weight = 86.4;
     state.waist = 96;
     state.weeklyLossTarget = 0.5;
     const items = healthGuardrails();
     expect(items.map((item) => item.label)).toEqual(["腰高比", "热量下限", "减重速度"]);
     expect(items[0]).toMatchObject({ value: 0.54, status: "需关注" });
-    expect(items[1]).toMatchObject({ value: "1.03x", status: "偏低" });
+    expect(items[1]).toMatchObject({ value: "1.04x", status: "偏低" });
     expect(items[2]).toMatchObject({ value: "0.5kg/周", status: "稳妥" });
   });
 
-  it("BMI 达到 28 时追加提示项，腰围缺失时不输出", () => {
-    state.user = { height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
+  it("BMI 达到 28 时追加提示项，腰围缺失时保留其他指标", () => {
+    state.weight = 86.4;
+    state.user = { formula: "male", activityLevel: "light", height: 178, age: 34, bmr: 1818, dailyCalories: 1880 };
     state.weight = 100;
     state.waist = 96;
     state.weeklyLossTarget = 0.5;
     expect(healthGuardrails().map((item) => item.label)).toEqual(["腰高比", "热量下限", "减重速度", "BMI"]);
     state.waist = 0;
-    expect(healthGuardrails()).toEqual([]);
+    expect(healthGuardrails().map((item) => item.label)).toEqual(["热量下限", "减重速度", "BMI"]);
   });
 });
 
@@ -410,13 +428,13 @@ describe("目标 ETA", () => {
   });
 
   it("目标无效时给出占位文案", () => {
-    // weight == target 落在 target >= weight 守卫里，"已达到目标" 分支当前不可达
+    // 达到或超过原目标后提供维持阶段路径
     state.weight = 76;
     state.targetWeight = 76;
     state.weeklyLossTarget = 0.6;
-    expect(targetEta()).toBe("待完善目标");
+    expect(targetEta()).toBe("已达到目标 · 进入维持阶段");
     state.targetWeight = 90;
-    expect(targetEta()).toBe("待完善目标");
+    expect(targetEta()).toBe("已达到目标 · 进入维持阶段");
     state.targetWeight = 70;
     state.weeklyLossTarget = 0;
     expect(targetEta()).toBe("待完善目标");

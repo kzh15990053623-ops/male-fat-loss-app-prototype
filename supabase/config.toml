@@ -34,6 +34,10 @@ minimum_password_length = 8
 enable_signup = true
 enable_confirmations = false
 
-# Custom server credential is verified in the function before any budget action.
+# Budget calls authenticate with a narrowly scoped server credential.
 [functions.nutrition-budget-gateway]
 verify_jwt = false
+
+# Account deletion always requires the user's authenticated JWT.
+[functions.delete-own-account]
+verify_jwt = true

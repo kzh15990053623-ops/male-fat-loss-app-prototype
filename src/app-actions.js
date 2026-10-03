@@ -1,4 +1,24 @@
+import { loadHistoryPage, resolveHistoryConflict } from "./history-store.js";
+import { requestAccountMail, completeAccountCallback, updatePassword } from "./actions/account-recovery.js";
+import { downloadDiagnostics, recoverCloudHistory, updatePwa, observePwaUpdates } from "./actions/product-support.js";
+import {
+  resolveSnapshotConflict,
+  editMealEntry,
+  deleteMealEntry,
+  confirmIntake,
+  manageMealTemplate,
+  saveHistoryMetrics,
+  deleteHistoryActivity,
+} from "./actions/records.js";
 import { state, runtime, AUTH_EMAIL_KEY } from "./app-state.js";
+import { nativeRuntime } from "./native-runtime.js";
+import {
+  initializeNativeCloud,
+  resumeNativeCloud,
+  connectNativeCloud,
+  disconnectNativeCloud,
+  exportCloudRecovery,
+} from "./native-cloud.js";
 import {
   setSyncFeedbackHandler,
   clearLegacyAuthStorage,
@@ -38,8 +58,13 @@ import {
 } from "./actions/services.js";
 import {
   addMealDraft,
+  scaleMealPortion,
   updateMealDraftFromForm,
   recognizeMealNutrition,
+  selectMealPhoto,
+  removeMealPhoto,
+  reviewMealPhoto,
+  refreshNutritionBudget,
   cancelMealNutrition,
   saveCurrentMealAsTemplate,
   useMealTemplate,
@@ -73,8 +98,10 @@ import {
   saveSettingsFromForm,
   completeSetupFromForm,
   exportUserData,
+  importUserData,
   clearUserData,
   applyRecommendedCalories,
+  useEstimatedCalories,
   handleSettingControlInput,
 } from "./actions/settings.js";
 import {
@@ -93,12 +120,13 @@ import { adjustHabitMetric, toggleTaskByLabel, followCoachAction, saveBodyMetric
 // click/input/change 表按声明顺序匹配，必须与既有分支的优先级一致。
 
 const mealDraftFieldSelector =
-  "[data-meal-slot], [data-meal-calories], [data-meal-food], [data-meal-amount], [data-meal-unit], [data-meal-cooking], [data-meal-oil], [data-meal-sauce], [data-meal-protein], [data-meal-carbs], [data-meal-fat]";
+  "[data-meal-date], [data-meal-slot], [data-meal-calories], [data-meal-food], [data-meal-amount], [data-meal-unit], [data-meal-cooking], [data-meal-oil], [data-meal-sauce], [data-meal-protein], [data-meal-carbs], [data-meal-fat]";
 let delegatedEventsBound = false;
 let dayBoundaryTimer;
 let reconnectPromise;
 
 async function retryConnection({ silent = false } = {}) {
+  if (nativeRuntime()) return syncStateNow({ silent });
   if (reconnectPromise) return reconnectPromise;
   if (runtime.authSessionStatus !== "offline-unverified" && !runtime.offlineSyncReadRequired) return syncStateNow({ silent });
   runtime.offlineSyncReadRequired = true;
@@ -160,6 +188,28 @@ function handleAppActionCommand(action) {
   else showToast(action === "week" ? "当前已展示 7 天趋势" : "操作已记录");
 }
 
+async function pickMealPhoto(control) {
+  const native = nativeRuntime();
+  if (!native) {
+    document.querySelector(`[data-meal-photo="${control.dataset.pickPhoto}"]`)?.click();
+    return;
+  }
+  try {
+    const result =
+      control.dataset.pickPhoto === "camera"
+        ? await native.Camera.takePhoto({ quality: 85, targetWidth: 1280, targetHeight: 1280 })
+        : (await native.Camera.chooseFromGallery({ limit: 1 })).results?.[0];
+    if (!result?.webPath) return;
+    const response = await fetch(result.webPath);
+    if (!response.ok) throw new Error("无法读取所选照片");
+    const blob = await response.blob();
+    const file = new File([blob], "meal-photo.jpg", { type: blob.type || "image/jpeg" });
+    await selectMealPhoto({ files: [file], value: "" });
+  } catch (error) {
+    showToast(error.message || "照片读取失败，请重试");
+  }
+}
+
 function activateWeekTab(nextTab) {
   activateTab(nextTab || "home");
   render();
@@ -168,6 +218,9 @@ function activateWeekTab(nextTab) {
 }
 
 const submitRoutes = [
+  { selector: "[data-password-recovery]", run: (form) => void updatePassword(form) },
+  { selector: "[data-history-metrics]", run: saveHistoryMetrics },
+  { selector: "[data-cloud-form]", run: (form) => void connectNativeCloud(form) },
   { selector: "[data-auth-form]", run: () => void submitEmailAuth() },
   { selector: "[data-setup-form]", run: () => completeSetupFromForm() },
   { selector: "[data-settings-form]", run: () => void saveSettingsFromForm() },
@@ -208,7 +261,7 @@ const inputRoutes = [
   {
     selector: "[data-waist-input]",
     run: (input) => {
-      state.waistDraft = Number(input.value || state.waist);
+      state.waistDraft = input.value;
     },
   },
   {
@@ -246,6 +299,9 @@ function handleAppInput(event) {
 }
 
 const changeRoutes = [
+  { selector: "[data-import-backup-file]", run: (input) => void importUserData(input) },
+  { selector: "[data-meal-photo]", run: (input) => void selectMealPhoto(input) },
+  { selector: "[data-photo-reviewed]", run: (input) => reviewMealPhoto(input.checked) },
   { selector: "[data-setting-control]", run: handleSettingControlInput },
   {
     selector: "[data-activity-type]",
@@ -287,12 +343,79 @@ function handleAppToggle(event) {
 }
 
 const clickRoutes = [
+  { selector: "[data-account-mail]", run: (control) => void requestAccountMail(control) },
+  { selector: "[data-export-diagnostics]", run: downloadDiagnostics },
+  { selector: "[data-recover-cloud]", run: () => void recoverCloudHistory() },
+  {
+    selector: "[data-rest-day]",
+    run: () => {
+      state.restDay = !state.restDay;
+      saveStoredState();
+      render();
+    },
+  },
+  {
+    selector: "[data-enter-maintenance]",
+    run: () => {
+      state.user.goalMode = "maintain";
+      saveStoredState();
+      render();
+      showToast("已进入维持阶段；如需调整预算，请在设置中确认");
+    },
+  },
+  { selector: "[data-update-pwa]", run: () => void updatePwa() },
+  {
+    selector: "[data-load-history]",
+    run: () =>
+      void loadHistoryPage()
+        .then(render)
+        .catch((error) => showToast(error.message)),
+  },
+  { selector: "[data-snapshot-conflict]", run: resolveSnapshotConflict },
+  {
+    selector: "[data-history-choice]",
+    run: (control) =>
+      void resolveHistoryConflict(control.dataset.recordDate, control.dataset.historyChoice).then(() => {
+        saveStoredState();
+        render();
+      }),
+  },
+  {
+    selector: "[data-history-page]",
+    run: (control) => {
+      runtime.historyPage = Number(control.dataset.historyPage);
+      render();
+    },
+  },
+  { selector: "[data-scale-portion]", run: scaleMealPortion },
+  { selector: "[data-copy-meal-entry]", run: editMealEntry },
+  { selector: "[data-edit-meal-entry]", run: editMealEntry },
+  { selector: "[data-delete-meal-entry]", run: deleteMealEntry },
+  { selector: "[data-confirm-intake]", run: confirmIntake },
+  { selector: "[data-delete-template], [data-rename-template]", run: manageMealTemplate },
+  { selector: "[data-delete-history-activity]", run: deleteHistoryActivity },
+  {
+    selector: "[data-cloud-open]",
+    run: () => {
+      const cloud = nativeRuntime()?.cloud;
+      if (cloud) {
+        cloud.open = !cloud.open;
+        render();
+      }
+    },
+  },
+  { selector: "[data-cloud-disconnect]", run: () => void disconnectNativeCloud().catch((error) => showToast(error.message)) },
+  { selector: "[data-cloud-recovery]", run: () => void exportCloudRecovery() },
   {
     selector: "[data-tab]",
     prevent: true,
     run: (control) => {
       activateTab(control.dataset.tab);
       render();
+      if (control.dataset.tab === "data")
+        void loadHistoryPage()
+          .then(render)
+          .catch((error) => showToast(error.message));
     },
   },
   { selector: "[data-chart-point]", run: (control) => selectChartPoint(control) },
@@ -312,7 +435,11 @@ const clickRoutes = [
   { selector: "[data-scroll-body-form]", run: focusBodyFormInput },
   { selector: "[data-logout]", run: () => void logout() },
   { selector: "[data-sync-now]", run: () => void retryConnection() },
-  { selector: "[data-export-data]", run: exportUserData },
+  { selector: "[data-export-data]", run: () => void exportUserData() },
+  {
+    selector: "[data-import-data]",
+    run: (control) => control.closest(".settings-group, .data-tools-card, .lock-card")?.querySelector("[data-import-backup-file]")?.click(),
+  },
   { selector: "[data-clear-data]", run: openClearConfirm },
   { selector: "[data-delete-account]", run: openDeleteAccountConfirm },
   { selector: "[data-add-activity]", run: addActivityFromDraft },
@@ -325,6 +452,9 @@ const clickRoutes = [
   { selector: "[data-diet-scenario]", run: (control) => selectDietScenario(control.dataset.dietScenario) },
   { selector: "[data-apply-scenario]", run: (control) => applyDietScenario(control.dataset.applyScenario) },
   { selector: "[data-ai-nutrition]", run: () => void recognizeMealNutrition() },
+  { selector: "[data-pick-photo]", run: (control) => void pickMealPhoto(control) },
+  { selector: "[data-remove-photo]", run: removeMealPhoto },
+  { selector: "[data-ai-budget]", run: () => void refreshNutritionBudget() },
   { selector: "[data-cancel-ai]", run: () => cancelMealNutrition() },
   { selector: "[data-scroll-meal-form]", run: () => scrollToMealForm() },
   { selector: "[data-record-meal]", run: (control) => startMealDraftFromSlot(control.dataset.recordMeal) },
@@ -362,6 +492,7 @@ const clickRoutes = [
   { selector: "[data-confirm-delete-account]", run: () => void deleteAccount() },
   { selector: "[data-dismiss-celebration]", run: () => dismissCelebration() },
   { selector: "[data-apply-calorie]", run: applyRecommendedCalories },
+  { selector: "[data-use-calorie-estimate]", run: useEstimatedCalories },
   { selector: "[data-apply-today-plan]", run: applyTodayTrainingPlan },
 ];
 
@@ -448,17 +579,25 @@ function bindEvents() {
 }
 
 function registerServiceWorker() {
+  if (nativeRuntime()) return;
   if (!("serviceWorker" in navigator) || window.location.protocol === "file:") return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
-      // Service worker support is a progressive enhancement.
-    });
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then(observePwaUpdates)
+      .catch(() => {
+        // Service worker support is a progressive enhancement.
+      });
   });
 }
 
 function bindConnectivityRetry() {
   scheduleDayBoundary();
   window.addEventListener("online", () => {
+    if (nativeRuntime()) {
+      void resumeNativeCloud();
+      return;
+    }
     if (runtime.authSessionStatus === "offline-unverified" || runtime.offlineSyncReadRequired) {
       void retryConnection();
       return;
@@ -474,6 +613,10 @@ function bindConnectivityRetry() {
       refreshCurrentDay({ renderNow: false });
       scheduleDayBoundary();
       if (!state.authRequired) render();
+      if (nativeRuntime()) {
+        void resumeNativeCloud();
+        return;
+      }
       if ((runtime.authSessionStatus === "offline-unverified" || runtime.offlineSyncReadRequired) && navigator.onLine !== false) {
         void retryConnection({ silent: true });
       }
@@ -490,7 +633,38 @@ async function initApp() {
   // root.innerHTML 重建不会移除挂载点，render() 无需重复绑定。
   bindEvents();
   const requestedSettingsRoute = location.hash === "#settings";
+  if (nativeRuntime()) {
+    state.appLoading = true;
+    state.authRequired = false;
+    render();
+    try {
+      const payload = await nativeRuntime().store.openDeviceStore();
+      runtime.authUserId = "device";
+      runtime.authProvider = "local";
+      state.authProvider = "local";
+      state.authEmail = "";
+      state.authRequired = false;
+      state.backendStatus = "device";
+      if (payload) loadStoredState(payload);
+      await initializeNativeCloud();
+      state.appLoading = false;
+      if (requestedSettingsRoute) state.activeTab = "profile";
+      else activateTab(tabFromLocation("home"), { replace: !tabFromLocation(), transition: false });
+      state.settingsOpen = requestedSettingsRoute && state.setupCompleted;
+      render();
+      if (hasBlockingOverlay()) requestAnimationFrame(focusSettingsPanel);
+      scheduleLocalReminder();
+      void resumeNativeCloud();
+      return;
+    } catch (error) {
+      document.getElementById("app").innerHTML =
+        `<main class="lock-screen"><section class="lock-card"><h1>无法打开手机档案</h1><p>手机数据读取失败，请保留应用数据并重试。</p><button class="complete-button" type="button" onclick="location.reload()">重新打开</button></section></main>`;
+      console.error("Device storage unavailable", error);
+      return;
+    }
+  }
   state.appLoading = true;
+  const callbackAuthenticated = await completeAccountCallback();
   clearLegacyAuthStorage();
   state.authEmail = readStorageValue(AUTH_EMAIL_KEY);
   state.authProvider = runtime.authProvider;
@@ -500,13 +674,13 @@ async function initApp() {
   state.clearConfirmOpen = false;
   state.deleteAccountOpen = false;
   state.authRequired = true;
-  state.authError = "";
+  state.authError ||= "";
   state.authFieldErrors = {};
   state.authServiceStatus = "checking";
   state.authServiceMessage = "正在检查认证服务…";
   state.authServiceCode = "";
   render();
-  const session = await refreshSession({ detailed: true });
+  const session = callbackAuthenticated ? { status: "authenticated" } : await refreshSession({ detailed: true });
   if (session.reason === "stale-session") return;
   state.appLoading = false;
   state.backendStatus = runtime.accessToken ? "connecting" : "idle";

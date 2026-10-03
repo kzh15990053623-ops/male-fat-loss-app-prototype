@@ -72,8 +72,9 @@ describe("normalizeMealList", () => {
     ]);
     expect(result).toHaveLength(2);
     expect(result[0].calories).toBe(0);
-    expect(result[0].macros).toEqual({ protein: 0, carbs: 0, fat: 2 });
-    expect(result[0].foods).toEqual(["鸡蛋", "5"]);
+    expect(result[0].macros).toEqual({ protein: 0, carbs: 0, fat: 0 });
+    expect(result[0].nutritionKnown).toBe(false);
+    expect(result[0].entries[0].food).toBe("鸡蛋、5");
     expect(result[0].nutritionSource).toBe("ai");
     expect(result[0].aiMeta).toMatchObject({ requestId: "r", confidence: 1, needsReview: true });
     expect(result[1].id).toBe("custom");
@@ -89,7 +90,7 @@ describe("normalizeMealList", () => {
 
   it("食物列表最多保留 20 条", () => {
     const result = normalizeMealList([{ id: "lunch", foods: Array.from({ length: 25 }, (_, index) => `food-${index}`) }]);
-    expect(result[0].foods).toHaveLength(20);
+    expect(result[0].entries[0].food.split("、")).toHaveLength(20);
   });
 });
 
@@ -253,6 +254,17 @@ describe("纯序列化与本地变更时钟", () => {
     state.dailyRecords = {};
     hydrateTodayFromRecords();
     expect(state.dailyRecords).toEqual({});
+  });
+
+  it("清空当前腰围后不会被旧日记录恢复，历史测量仍保留", () => {
+    const date = todayKey();
+    state.waist = 0;
+    state.waistLogs = [{ date, label: "今天", value: 95 }];
+    state.dailyRecords = { [date]: { date, waist: 95 } };
+    hydrateTodayFromRecords();
+    expect(state.waist).toBe(0);
+    expect(state.waistLogs).toHaveLength(1);
+    expect(state.dailyRecords[date].waist).toBe(95);
   });
 
   it("包级变更只推进包时间，真实当天字段变化才推进日记录时间", () => {

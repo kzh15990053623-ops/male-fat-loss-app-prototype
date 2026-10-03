@@ -105,6 +105,18 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = serviceRoleKey;
 process.env.LOCAL_AUTH_ENABLED = "false";
 
 const { readAppState, writeAppState } = await import(`../server/supabase.mjs?local-integration=${Date.now()}`);
+const snapshot = (weight) => ({
+  schemaVersion: 3,
+  weight,
+  setupCompleted: true,
+  user: {},
+  preferences: {},
+  dailyRecords: {},
+  taskOverrides: {},
+  weightLogs: [],
+  waistLogs: [],
+  customActivities: [],
+});
 const runId = randomUUID();
 const password = `Local-only-${runId}`;
 const createdUserIds = new Set();
@@ -119,11 +131,7 @@ try {
     signIn(apiUrl, anonKey, userB.email, password),
   ]);
 
-  const firstA = await writeAppState(
-    { state: { schemaVersion: 3, weight: 82.4 }, meals: [], revision: 0 },
-    sessionA.access_token,
-    userA.id,
-  );
+  const firstA = await writeAppState({ state: snapshot(82.4), meals: [], revision: 0 }, sessionA.access_token, userA.id);
   assert.equal(firstA.revision, 1);
   assert.equal((await readAppState(sessionA.access_token, userA.id)).state.weight, 82.4);
   console.log("PASS: migrations allow a signed-in user to create and read their own record");
@@ -151,11 +159,7 @@ try {
   }
   assert.equal((await readAppState(sessionA.access_token, userA.id)).state.weight, 82.4);
 
-  const firstB = await writeAppState(
-    { state: { schemaVersion: 3, weight: 70.1 }, meals: [], revision: 0 },
-    sessionB.access_token,
-    userB.id,
-  );
+  const firstB = await writeAppState({ state: snapshot(70.1), meals: [], revision: 0 }, sessionB.access_token, userB.id);
   assert.equal(firstB.revision, 1);
 
   const crossUserRead = await restRequest(
@@ -178,8 +182,8 @@ try {
   console.log("PASS: anonymous and cross-user reads, inserts, updates and deletes cannot access another user's record");
 
   const competingWrites = await Promise.allSettled([
-    writeAppState({ state: { schemaVersion: 3, weight: 81.9 }, meals: [], revision: 1 }, sessionA.access_token, userA.id),
-    writeAppState({ state: { schemaVersion: 3, weight: 81.7 }, meals: [], revision: 1 }, sessionA.access_token, userA.id),
+    writeAppState({ state: snapshot(81.9), meals: [], revision: 1 }, sessionA.access_token, userA.id),
+    writeAppState({ state: snapshot(81.7), meals: [], revision: 1 }, sessionA.access_token, userA.id),
   ]);
   const fulfilled = competingWrites.filter((result) => result.status === "fulfilled");
   const rejected = competingWrites.filter((result) => result.status === "rejected");
@@ -199,6 +203,73 @@ try {
   assert.equal((await readAppState(sessionB.access_token, userB.id)).revision, 0);
   assert.equal((await readAppState(sessionA.access_token, userA.id)).revision, 2, "Deleting B's record must preserve A's record");
   console.log("PASS: deleting one's own record leaves the other user's record intact");
+
+  await assert.rejects(writeAppState({ state: "invalid", meals: [], revision: 2 }, sessionA.access_token, userA.id), {
+    code: "STATE_PAYLOAD_INVALID",
+  });
+  assert.equal((await readAppState(sessionA.access_token, userA.id)).revision, 2);
+  const historical = await restRequest(apiUrl, anonKey, sessionA.access_token, "rpc/write_app_day", {
+    method: "POST",
+    body: { p_date: "2020-01-01", p_record: { date: "2020-01-01", weight: 80 }, p_revision: 0 },
+  });
+  assert.equal(historical.response.status, 200);
+  assert.equal(historical.payload.record.weight, 80);
+  assert.equal((await readAppState(sessionA.access_token, userA.id)).revision, 3);
+  const historyB = await restRequest(apiUrl, anonKey, sessionB.access_token, "app_daily_records?select=date,record");
+  await assertReadIsDeniedOrEmpty(historyB, "User B archive read");
+  const reserved = await Promise.all(
+    Array.from({ length: 12 }, () =>
+      restRequest(apiUrl, serviceRoleKey, serviceRoleKey, "rpc/nutrition_budget_for_user", {
+        method: "POST",
+        body: {
+          p_action: "reserve",
+          p_request_id: randomUUID(),
+          p_user_id: userA.id,
+          p_limit: 100000000,
+          p_usage: null,
+          p_monthly_limit: 20,
+          p_daily_limit: 5,
+        },
+      }),
+    ),
+  );
+  for (const result of reserved) assert.equal(result.response.status, 200);
+  assert.equal(reserved.filter((result) => result.payload.allowed).length, 5);
+  const independent = await restRequest(apiUrl, serviceRoleKey, serviceRoleKey, "rpc/nutrition_budget_for_user", {
+    method: "POST",
+    body: {
+      p_action: "reserve",
+      p_request_id: randomUUID(),
+      p_user_id: userB.id,
+      p_limit: 100000000,
+      p_usage: null,
+      p_monthly_limit: 20,
+      p_daily_limit: 5,
+    },
+  });
+  assert.equal(independent.payload.allowed, true);
+  assert.equal(independent.payload.userRequests, 1);
+  const browserQuota = await restRequest(apiUrl, anonKey, sessionA.access_token, "rpc/nutrition_budget_for_user", {
+    method: "POST",
+    body: { p_action: "status", p_user_id: userA.id, p_limit: 100000000 },
+  });
+  assert.ok([401, 403].includes(browserQuota.response.status));
+  const clear = await writeAppState(
+    { state: { schemaVersion: 3, clearedAt: new Date().toISOString() }, meals: null, revision: 3 },
+    sessionA.access_token,
+    userA.id,
+  );
+  const staleHistory = await restRequest(apiUrl, anonKey, sessionA.access_token, "rpc/write_app_day", {
+    method: "POST",
+    body: { p_date: "2020-01-01", p_record: { date: "2020-01-01", weight: 80 }, p_revision: 0 },
+  });
+  assert.equal(staleHistory.payload.cleared, true);
+  assert.equal((await readAppState(sessionA.access_token, userA.id)).revision, clear.revision);
+  const emptyArchive = await restRequest(apiUrl, anonKey, sessionA.access_token, "app_daily_records?select=date");
+  assert.deepEqual(emptyArchive.payload, []);
+  console.log(
+    "PASS: malformed saves retain their revision; archive RLS, historical CAS and clear guards hold; concurrent personal quotas allow five calls independently per account",
+  );
 
   await deleteUser(apiUrl, serviceRoleKey, userA.id);
   createdUserIds.delete(userA.id);

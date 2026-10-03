@@ -1,6 +1,12 @@
+import { renderPasswordRecovery } from "./actions/account-recovery.js";
+import { renderPrivacyInfo } from "./render/product-info.js";
 import { state, navItems, runtime } from "./app-state.js";
+import { isNativeApp } from "./native-runtime.js";
+import { renderNativeCloudPanel } from "./render/native-cloud.js";
 import { icon, escapeHtml } from "./app-utils.js";
 import { isOfflineAccessTrusted } from "./app-storage.js";
+import { estimateCalorieBudget, totalBurned } from "./app-logic.js";
+import { numericSettingFields } from "./settings-fields.js";
 import { loadingSpinner } from "./render/shared.js";
 import { renderHome } from "./render/pages/home.js";
 import { renderDietLab } from "./render/pages/diet.js";
@@ -28,6 +34,7 @@ function toastBannerHtml() {
 function shellSignature() {
   return [
     state.appLoading ? 1 : 0,
+    runtime.recoveryVerified ? 1 : 0,
     state.authRequired ? 1 : 0,
     state.setupCompleted ? 1 : 0,
     state.activeTab,
@@ -167,12 +174,14 @@ function appShell() {
       ${
         state.appLoading
           ? renderSkeletonScreen()
-          : state.authRequired
-            ? renderLockScreen()
-            : !state.setupCompleted
-              ? renderOnboardingScreen()
-              : `
-        <section class="app-surface ${escapeHtml(runtime.pendingTabEnter ? "is-tab-entering" : "")}" ${overlayOpen ? 'inert aria-hidden="true"' : ""}>
+          : runtime.recoveryVerified
+            ? renderPasswordRecovery()
+            : state.authRequired
+              ? renderLockScreen()
+              : !state.setupCompleted
+                ? renderOnboardingScreen()
+                : `
+        <section class="app-surface ${escapeHtml(runtime.pendingTabEnter ? "is-tab-entering" : "")}" data-page="${escapeHtml(state.activeTab)}" ${overlayOpen ? 'inert aria-hidden="true"' : ""}>
           ${state.toast ? toastBannerHtml() : ""}
           <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(runtime.completionAnnouncement || "")}</p>
           ${renderCurrentPage()}
@@ -206,6 +215,8 @@ function renderSkeletonScreen() {
 function numberField({ key, label, value, min, max, step = 1, placeholder = "" }) {
   const error = state.setupFieldErrors?.[key] || "";
   const errorId = `field-error-${key}`;
+  const hint = key === "weeklyLoss" ? "可填写 0.1–1.2 kg/周" : "";
+  const hintId = `field-hint-${key}`;
   const draftValue =
     state.settingsDraft && Object.prototype.hasOwnProperty.call(state.settingsDraft, key) ? state.settingsDraft[key] : value;
   const hasDraft = state.settingsDraft && Object.prototype.hasOwnProperty.call(state.settingsDraft, key);
@@ -213,53 +224,25 @@ function numberField({ key, label, value, min, max, step = 1, placeholder = "" }
   return `
     <label class="field-label ${escapeHtml(error ? "has-error" : "")}" data-field-name="${escapeHtml(key)}">
       <span>${label}</span>
-      <input data-setting-field="${escapeHtml(key)}" data-setting-control name="${escapeHtml(key)}" type="number" inputmode="decimal" autocomplete="off" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(normalizedValue)}" placeholder="${escapeHtml(placeholder)}" ${error ? `aria-invalid="true" aria-describedby="${escapeHtml(errorId)}"` : ""} />
+      <input data-setting-field="${escapeHtml(key)}" data-setting-control name="${escapeHtml(key)}" type="number" inputmode="decimal" autocomplete="off" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(normalizedValue)}" placeholder="${escapeHtml(placeholder)}" ${error ? 'aria-invalid="true"' : ""} ${error || hint ? `aria-describedby="${escapeHtml([hint ? hintId : "", error ? errorId : ""].filter(Boolean).join(" "))}"` : ""} />
+      ${hint ? `<small class="field-hint" id="${escapeHtml(hintId)}">${escapeHtml(hint)}</small>` : ""}
       ${error ? `<small class="field-error" id="${escapeHtml(errorId)}" role="alert">${escapeHtml(error)}</small>` : ""}
     </label>
   `;
 }
 
-// 指标字段唯一权威定义：Onboarding 与 Settings 共用同一份 key/label/范围配置，
-// 避免两处手写导致范围校验漂移。placeholder 仅引导页展示。
 function bodyMetricFields() {
-  return {
-    height: { label: "身高 (cm)", value: state.user.height, min: 120, max: 230, placeholder: "178" },
-    age: { label: "年龄", value: state.user.age, min: 16, max: 80, placeholder: "34" },
-    weight: {
-      label: "当前体重 (kg)",
-      value: state.weight,
-      min: 40,
-      max: 200,
-      step: 0.1,
-      placeholder: "86.4",
-    },
-    waist: { label: "当前腰围 (cm)", value: state.waist, min: 50, max: 180, step: 0.1, placeholder: "96" },
-    targetWeight: {
-      label: "目标体重 (kg)",
-      value: state.targetWeight,
-      min: 40,
-      max: 180,
-      step: 0.1,
-      placeholder: "76",
-    },
-    targetWaist: {
-      label: "目标腰围 (cm)",
-      value: state.targetWaist,
-      min: 50,
-      max: 160,
-      step: 0.1,
-      placeholder: "86",
-    },
-    calories: {
-      label: "每日热量预算",
-      value: state.user.dailyCalories,
-      min: 1200,
-      max: 3600,
-      step: 10,
-      placeholder: "1880",
-    },
-    weeklyLoss: { label: "每周目标 (kg)", value: state.weeklyLossTarget, min: 0.1, max: 1.2, step: 0.1 },
+  const values = {
+    height: state.user.height,
+    age: state.user.age,
+    weight: state.weight,
+    waist: state.waist,
+    targetWeight: state.targetWeight,
+    targetWaist: state.targetWaist,
+    weeklyLoss: state.weeklyLossTarget,
+    calories: state.user.dailyCalories,
   };
+  return Object.fromEntries(Object.entries(numericSettingFields).map(([key, field]) => [key, { ...field, value: values[key] }]));
 }
 
 function metricNumberFields(keys, { withPlaceholder = false } = {}) {
@@ -270,6 +253,78 @@ function metricNumberFields(keys, { withPlaceholder = false } = {}) {
       return numberField({ key, ...config, ...(withPlaceholder && placeholder ? { placeholder } : {}) });
     })
     .join("");
+}
+
+function renderEstimateOptions() {
+  const draft = { formula: "manual", activityLevel: "light", goalMode: "loss", ...state.user, ...state.settingsDraft };
+  return `<div class="settings-grid">${[
+    [
+      "formula",
+      "估算公式",
+      [
+        ["manual", "手动预算 / 暂不估算"],
+        ["male", "男性公式"],
+        ["female", "女性公式"],
+      ],
+    ],
+    [
+      "activityLevel",
+      "日常活动水平",
+      [
+        ["sedentary", "久坐"],
+        ["light", "轻度活动"],
+        ["moderate", "中等活动"],
+        ["active", "较多活动"],
+      ],
+    ],
+    [
+      "goalMode",
+      "当前阶段",
+      [
+        ["loss", "减脂记录"],
+        ["maintain", "维持阶段"],
+      ],
+    ],
+  ]
+    .map(
+      ([key, label, options]) =>
+        `<label class="field-label"><span>${escapeHtml(label)}</span><select name="${escapeHtml(key)}" data-setting-control autocomplete="off" ${key === "formula" ? "data-setting-formula" : key === "activityLevel" ? "data-setting-activity" : "data-setting-goal-mode"}>${options.map(([value, text]) => `<option value="${escapeHtml(value)}" ${draft[key] === value ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}</select></label>`,
+    )
+    .join(
+      "",
+    )}</div><p class="settings-note">仅供成年人记录与估算。特殊健康情况请使用专业人员建议的手动预算；选择公式前不会生成自动预算。</p>`;
+}
+
+function renderCalorieSetting({ withPlaceholder = false } = {}) {
+  const draft = state.settingsDraft;
+  const mode = draft?.calorieMode || (state.user.dailyCalories > 0 ? "manual" : "auto");
+  const estimate = estimateCalorieBudget({
+    height: draft?.height ?? state.user.height,
+    age: draft?.age ?? state.user.age,
+    weight: draft?.weight ?? state.weight,
+    weeklyLoss: draft?.weeklyLoss ?? state.weeklyLossTarget,
+    activityKcal: state.setupCompleted ? totalBurned() : 0,
+    formula: draft?.formula || state.user.formula || "manual",
+    activityLevel: draft?.activityLevel || state.user.activityLevel || "light",
+    goalMode: draft?.goalMode || state.user.goalMode,
+  });
+  const note =
+    mode === "manual"
+      ? "手动预算；可重新使用估算值"
+      : estimate
+        ? "估算，可调整"
+        : draft?.calories
+          ? "基础信息有效后更新估算"
+          : "填写身高、年龄、当前体重和每周减重目标后自动估算";
+  return `
+    <div class="calorie-setting">
+      ${metricNumberFields(["calories"], { withPlaceholder })}
+      <div class="calorie-setting-help">
+        <small data-calorie-estimate-note aria-live="polite">${note}</small>
+        <button type="button" data-use-calorie-estimate>使用估算值</button>
+      </div>
+    </div>
+  `;
 }
 
 function renderOnboardingScreen() {
@@ -283,12 +338,28 @@ function renderOnboardingScreen() {
         </div>
         <p class="eyebrow">建立你的第一份身体基线</p>
         <h1>从真实数据开始</h1>
-        <p>我们不会为新账号填充演示记录。这些信息只用于预算估算、训练建议与个人趋势。</p>
-        <div class="settings-grid">
-          ${metricNumberFields(["height", "age", "weight", "waist", "targetWeight", "targetWaist", "calories", "weeklyLoss"], { withPlaceholder: true })}
+        <p>${isNativeApp() ? "资料和记录保存在这部手机，用于预算估算、训练建议与个人趋势。" : "我们不会为新账号填充演示记录。这些信息只用于预算估算、训练建议与个人趋势。"}</p>
+        <div class="setup-group">
+          <h2>基本资料</h2><p>仅限成年人。手动预算时身高可跳过。</p>
+          <div class="settings-grid">${metricNumberFields(["height", "age", "weight"], { withPlaceholder: true })}</div>
+        </div>
+        <div class="setup-group">
+          <h2>减重目标与预算</h2>
+          ${renderEstimateOptions()}
+          <div class="settings-grid">
+            ${metricNumberFields(["targetWeight", "weeklyLoss"], { withPlaceholder: true })}
+            ${renderCalorieSetting({ withPlaceholder: true })}
+          </div>
+        </div>
+        <div class="setup-group">
+          <h2>腰围 <small>选填</small></h2>
+          <p>暂时没量可以跳过，之后随时补充。</p>
+          <div class="settings-grid">${metricNumberFields(["waist", "targetWaist"], { withPlaceholder: true })}</div>
         </div>
         <button class="complete-button" type="submit" data-complete-setup>${icon("arrow")}建立我的基线</button>
+        <button class="outline-button" type="button" data-import-data>已有备份？从文件恢复</button><input data-import-backup-file type="file" accept="application/json,.json" hidden aria-label="选择稳减备份文件" />
       </form>
+      ${renderNativeCloudPanel()}
     </section>
   `;
 }
@@ -337,12 +408,14 @@ function renderLockScreen() {
           <span class="brand-monogram">稳</span>
           <span><b>稳减</b><small>私人健康手账</small></span>
         </div>
+        ${renderPrivacyInfo()}
         <div class="auth-intro">
           <p class="eyebrow">${usingLocal ? "本机账号" : isSignup ? "建立你的健康档案" : "继续记录你的进步"}</p>
           <h1>${isSignup ? `创建${usingLocal ? "本机" : ""}账号` : "欢迎回来"}</h1>
           <p>${usingLocal ? "使用邮箱区分这台电脑上的档案；数据不会上传云端。" : isSignup ? "每一条体重、饮食与训练记录都只属于你。" : "登录后继续读取你的真实进度，不展示演示数据。"}</p>
         </div>
         ${serviceNotice}
+        ${usingLocal ? "" : `<div class="record-entry-actions"><button class="outline-button" type="button" data-account-mail="recover">忘记密码</button><button class="outline-button" type="button" data-account-mail="resend">重发验证邮件</button></div>`}
         <div class="field-label ${escapeHtml(emailError ? "has-error" : "")}">
           <label for="auth-email">邮箱</label>
           <input id="auth-email" data-auth-email name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com" value="${escapeHtml(emailValue)}" ${emailError ? 'aria-invalid="true" aria-describedby="auth-email-error"' : state.authError ? 'aria-describedby="auth-error"' : ""} ${authBlocked ? "disabled" : ""} required />
@@ -407,13 +480,18 @@ function renderSettingsPanel() {
       <div class="settings-group">
         <h3>基础信息</h3>
         <div class="settings-grid">
-          ${metricNumberFields(["height", "age", "weight", "waist", "targetWeight", "targetWaist", "weeklyLoss"])}
+          ${metricNumberFields(["height", "age", "weight", "targetWeight", "weeklyLoss"])}
         </div>
       </div>
       <div class="settings-group">
+        <h3>腰围（选填）</h3>
+        <div class="settings-grid">${metricNumberFields(["waist", "targetWaist"])}</div>
+      </div>
+      <div class="settings-group">
         <h3>目标与偏好</h3>
+        ${renderEstimateOptions()}
         <div class="settings-grid">
-          ${metricNumberFields(["calories"])}
+          ${renderCalorieSetting()}
           <label class="field-label">
             <span>单位</span>
             <select data-setting-unit data-setting-control name="unit" autocomplete="off">
@@ -427,8 +505,9 @@ function renderSettingsPanel() {
               <option value="off" ${!aiAssist ? "selected" : ""}>关闭</option>
             </select>
           </label>
+          ${isNativeApp() ? `<p class="settings-note">AI 识别需要登录云账号并联网。可在“我的”中连接云服务。</p>` : ""}
           <label class="field-label">
-            <span>应用打开时提醒时间</span>
+            <span>${isNativeApp() ? "每日记录提醒时间" : "应用打开时提醒时间"}</span>
             <input data-setting-reminder data-setting-control name="reminderTime" type="time" autocomplete="off" value="${escapeHtml(reminderTime)}" aria-describedby="settings-reminder-note" />
           </label>
           <label class="toggle-row">
@@ -438,10 +517,13 @@ function renderSettingsPanel() {
               <span class="toggle-track" aria-hidden="true"></span>
             </span>
           </label>
-          <p class="settings-note" id="settings-reminder-note">仅在应用保持打开时按所选时间提醒。允许通知后还会显示系统通知；关闭或挂起应用后无法保证提醒。</p>
+          <p class="settings-note" id="settings-reminder-note">${isNativeApp() ? "开启后由手机系统安排每日通知，送达时间可能受系统省电设置影响。" : "仅在应用保持打开时按所选时间提醒。允许通知后还会显示系统通知；关闭或挂起应用后无法保证提醒。"}</p>
         </div>
       </div>
-      <div class="settings-group">
+      ${
+        isNativeApp()
+          ? ""
+          : `<div class="settings-group">
         <h3>隐私与离线</h3>
         <label class="toggle-row">
           <span>信任此设备离线查看</span>
@@ -451,12 +533,15 @@ function renderSettingsPanel() {
           </span>
         </label>
         <p class="settings-note" id="trusted-offline-note">默认关闭。开启后，这台设备断网重开应用时可直接查看和继续记录当前账号的健康数据，不再要求登录。退出登录、删除账号或联网确认身份失效后会自动关闭。能使用此浏览器的人也能查看，请勿在共用设备开启。</p>
-      </div>
+      </div>`
+      }
       <div class="settings-group">
         <h3>记录保留与导出</h3>
-        <p class="settings-note">体重和腰围各保留最近 90 条记录；每日饮食、训练等综合记录保留最近 180 个记录日。达到上限后会自动移除最早的记录。</p>
+        <div class="settings-grid"><label class="field-label"><span>喝水习惯目标 (ml)</span><input autocomplete="off" name="waterTarget" type="number" min="250" max="5000" step="50" value="${escapeHtml(state.settingsDraft?.waterTarget ?? state.waterTarget)}" /></label><label class="field-label"><span>步数习惯目标</span><input autocomplete="off" name="stepsTarget" type="number" min="0" max="50000" step="100" value="${escapeHtml(state.settingsDraft?.stepsTarget ?? state.stepsTarget)}" /></label><label class="field-label"><span>睡眠习惯目标 (小时)</span><input autocomplete="off" name="sleepTarget" type="number" min="0" max="12" step="0.5" value="${escapeHtml(state.settingsDraft?.sleepTarget ?? state.sleepTarget ?? 7)}" /></label></div>
+        <p class="settings-note">${isNativeApp() ? "手机当前保留近期档案，请定期导出备份。" : "日常界面加载近期记录，完整历史按账号、日期独立归档，不自动到期。导出包含本机未同步记录和云端历史。"}旧版本曾经裁掉的数据无法恢复。</p>
         <p class="settings-note">如需长期保存，请定期导出备份。导出包含当前仍保留的数据，无法恢复已移除的旧记录。</p>
         <button class="outline-button" type="button" data-export-data>${icon("download")}导出当前数据备份</button>
+        <button class="outline-button" type="button" data-import-data>从文件导入备份</button><input data-import-backup-file type="file" accept="application/json,.json" hidden aria-label="选择稳减备份文件" />
       </div>
       <div class="settings-actions">
         <button class="complete-button" type="submit" data-save-settings aria-busy="${escapeHtml(saveBusy)}" ${saveBusy ? "disabled" : ""}>${saveBusy ? loadingSpinner() : icon("check")}<span>${saveBusy ? "保存中…" : "保存设置"}</span></button>
@@ -473,7 +558,7 @@ function renderClearConfirmPanel() {
       <span class="ai-mark danger-mark">${icon("trash")}</span>
       <div>
         <h2 id="clear-confirm-title">清空所有数据？</h2>
-        <p id="clear-confirm-copy">${state.authProvider === "local" ? "这会删除当前本机账号的全部健康记录。" : "这会删除本机记录，并尝试同步清空云端状态。"}操作完成后不能撤销。</p>
+        <p id="clear-confirm-copy">${isNativeApp() ? "这会删除这部手机里的全部健康记录。建议先导出备份。" : state.authProvider === "local" ? "这会删除当前本机账号的全部健康记录。" : "这会删除本机记录，并尝试同步清空云端状态。"}操作完成后不能撤销。</p>
       </div>
       <div class="confirm-actions">
         <button class="outline-button" data-close-clear-confirm ${clearBusy ? "disabled" : ""}>取消</button>

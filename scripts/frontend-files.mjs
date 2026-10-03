@@ -19,5 +19,8 @@ async function collectJsFiles(directory) {
 
 export async function discoverFrontendJsFiles(root = projectRoot) {
   const files = await collectJsFiles(join(root, "src"));
-  return files.map((file) => relative(root, file).replaceAll("\\", "/")).sort();
+  return files
+    .map((file) => relative(root, file).replaceAll("\\", "/"))
+    .filter((file) => !file.startsWith("src/native/"))
+    .sort();
 }

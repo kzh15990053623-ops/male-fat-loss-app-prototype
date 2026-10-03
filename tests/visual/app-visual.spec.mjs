@@ -39,6 +39,8 @@ async function prepareVisualScenario(page, id) {
   if (id === "settings") {
     await seedApp(page, { variant: "full", tab: "home" });
     await page.locator('[data-app-action="goal"]').click();
+    await expect(page.locator("[data-setting-formula]")).toHaveValue("male");
+    await expect(page.locator("[data-setting-activity]")).toBeVisible();
     // settings-in 入场动画即使被 reduced-motion 压到 0.01ms，仍会与截图机制竞态，
     // 偶发捕获到半透明面板。终态与自然状态一致，直接钉死动画消除竞态。
     await page.evaluate(() => {

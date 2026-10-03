@@ -35,7 +35,19 @@ try {
 
   const saved = await service.writeAppState(
     {
-      state: { schemaVersion: 3, setupCompleted: true, weight: 86.2, authError: "must not persist" },
+      state: {
+        schemaVersion: 3,
+        setupCompleted: true,
+        weight: 86.2,
+        authError: "must not persist",
+        user: {},
+        preferences: {},
+        taskOverrides: {},
+        dailyRecords: {},
+        weightLogs: [],
+        waistLogs: [],
+        customActivities: [],
+      },
       meals: [{ id: "breakfast", name: "早餐", calories: 430, foods: ["燕麦"], macros: { protein: 20, carbs: 55, fat: 12 } }],
       revision: 0,
     },

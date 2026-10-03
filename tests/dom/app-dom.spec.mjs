@@ -175,7 +175,7 @@ test("首页本周行动进度从周一开始，忽略仅有身体基线的零�
   });
   expect(emptySummary).toMatchObject({ percent: null, days: 0, weekStart: "2026-08-03", through: "2026-08-09" });
   await expect(page.locator(".weekly-progress")).toHaveAttribute("aria-label", "本周还没有行动记录");
-  await expect(page.locator(".lab-hero")).toContainText("从第一笔开始");
+  await expect(page.locator(".weekly-progress")).toContainText("从第一笔开始");
   await expect(page.locator(".lab-hero")).not.toContainText(/0%|目标\s*78kg/);
 
   const summary = await page.evaluate(async () => {
@@ -186,6 +186,7 @@ test("首页本周行动进度从周一开始，忽略仅有身体基线的零�
       Array.from({ length: count }, (_, index) => ({ id: `meal-${index}`, calories: 300, macros: { protein: 0, carbs: 0, fat: 0 } }));
     const completeRecord = (date) => ({
       date,
+      intakeStatus: "complete",
       meals: meals(3),
       waterMl: 2400,
       steps: 9000,
@@ -195,7 +196,16 @@ test("首页本周行动进度从周一开始，忽略仅有身体基线的零�
     });
     state.dailyRecords = {
       "2026-08-02": completeRecord("2026-08-02"),
-      "2026-08-03": { date: "2026-08-03", meals: meals(3), waterMl: 2400, steps: 0, sleep: 0, workoutDone: false, customActivities: [] },
+      "2026-08-03": {
+        date: "2026-08-03",
+        intakeStatus: "complete",
+        meals: meals(3),
+        waterMl: 2400,
+        steps: 0,
+        sleep: 0,
+        workoutDone: false,
+        customActivities: [],
+      },
       "2026-08-09": { date: "2026-08-09", meals: [], waterMl: 0, steps: 9000, sleep: 7, workoutDone: true, customActivities: [] },
       "2026-08-10": completeRecord("2026-08-10"),
     };
@@ -337,6 +347,17 @@ test("设置提醒开关保留语义、键盘操作与保存结果，正文色�
   expect(switchAudit.contrastOnPaper2).toBeGreaterThanOrEqual(4.5);
 
   await reminderSwitch.focus();
+  // 模拟入场时延迟到达的聚焦回调，开关仍应保留键盘焦点。
+  await page.evaluate(async () => {
+    const { focusSettingsPanel } = await import("/src/actions/services.js");
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => {
+        focusSettingsPanel();
+        resolve();
+      }),
+    );
+  });
+  await expect(reminderSwitch).toBeFocused();
   await page.keyboard.press("Space");
   await expect(reminderSwitch).toBeChecked();
   await page.locator("[data-save-settings]").click();

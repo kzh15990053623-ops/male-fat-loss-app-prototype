@@ -133,7 +133,7 @@ describe("Supabase 状态首次写入 CAS", () => {
     });
 
     const result = await writeAppState(
-      { state: { schemaVersion: 3, clearedAt: "2036-08-30T00:00:00.000Z", weight: 999 }, meals: null, revision: 0 },
+      { state: { schemaVersion: 3, clearedAt: "2036-08-30T00:00:00.000Z" }, meals: null, revision: 0 },
       "access-token",
       "user-1",
     );

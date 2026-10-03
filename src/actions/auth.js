@@ -1,3 +1,4 @@
+import { clearHistory } from "../history-store.js";
 import {
   state,
   runtime,
@@ -230,7 +231,10 @@ export async function deleteAccount() {
       const data = await response.json().catch(() => ({}));
       if (accountChanged()) throw new Error("账号已切换，请重新确认要删除的账号");
       if (!response.ok) throw new Error(data.error || "账号删除失败，请稍后重试");
-      if (runtime.authUserId) removeStorageValue(userStorageKey());
+      if (runtime.authUserId) {
+        await clearHistory(runtime.authUserId);
+        removeStorageValue(userStorageKey());
+      }
       const aiController = runtime.aiNutritionController;
       runtime.aiNutritionSequence += 1;
       runtime.aiNutritionController = null;

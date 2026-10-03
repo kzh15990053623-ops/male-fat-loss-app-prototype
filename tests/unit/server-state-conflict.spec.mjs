@@ -38,6 +38,29 @@ describe("stateRevision 版本号解析", () => {
 });
 
 describe("stateWriteRevision 写入版本契约", () => {
+  it("rejects wrong snapshot types without changing stored records or revision", async () => {
+    await service.writeAppState({ state: { weight: 80 }, meals: [], revision: 0 }, userId);
+    for (const state of [null, "wrong", [], { schemaVersion: 3, weight: 20 }])
+      await expect(service.writeAppState({ state, meals: [], revision: 1 }, userId)).rejects.toMatchObject({
+        status: 400,
+        code: "STATE_PAYLOAD_INVALID",
+      });
+    expect(await service.readAppState(userId)).toMatchObject({ state: { weight: 80 }, revision: 1 });
+  });
+  it("historical edits advance the main version and refuse stale history writes", async () => {
+    const date = "2020-01-01";
+    await service.writeAppState({ state: { dailyRecords: { [date]: { date, weight: 80 } } }, meals: [], revision: 0 }, userId);
+    const old = (await service.readHistory(userId))[0];
+    await service.writeHistory(userId, date, { date, weight: 75 }, old.revision);
+    await expect(
+      service.writeAppState({ state: { dailyRecords: { [date]: { date, weight: 80 } } }, meals: [], revision: 1 }, userId),
+    ).rejects.toMatchObject({ status: 409, conflict: { state: { dailyRecords: { [date]: { weight: 75 } } } } });
+    await expect(service.writeHistory(userId, date, { date, weight: 77 }, old.revision)).rejects.toMatchObject({ status: 409 });
+    await service.writeAppState({ state: { clearedAt: new Date().toISOString() }, meals: null, revision: 2 }, userId);
+    await expect(service.writeHistory(userId, date, { date, weight: 77 }, 0)).rejects.toMatchObject({ code: "STATE_CLEARED", status: 409 });
+    expect(await service.readHistory(userId)).toEqual([]);
+    expect((await service.readAppState(userId)).revision).toBe(3);
+  });
   it("只接受显式非负整数", () => {
     expect(stateWriteRevision({ revision: 0 })).toEqual({ ok: true, missing: false, revision: 0 });
     expect(stateWriteRevision({ revision: 7 })).toEqual({ ok: true, missing: false, revision: 7 });
@@ -78,7 +101,25 @@ describe("服务端墓碑规范化", () => {
 
 describe("writeAppState 乐观并发", () => {
   it("首次写入把版本号嵌入状态并返回 revision 1", async () => {
-    const result = await service.writeAppState({ state: { schemaVersion: 3, weight: 85.6 }, meals: [], revision: 0 }, userId);
+    const result = await service.writeAppState(
+      {
+        state: {
+          schemaVersion: 3,
+          weight: 85.6,
+          user: {},
+          preferences: {},
+          dailyRecords: {},
+          taskOverrides: {},
+          weightLogs: [],
+          waistLogs: [],
+          customActivities: [],
+          setupCompleted: false,
+        },
+        meals: [],
+        revision: 0,
+      },
+      userId,
+    );
     expect(result.revision).toBe(1);
     const read = await service.readAppState(userId);
     expect(read.revision).toBe(1);
@@ -186,7 +227,7 @@ describe("writeAppState 乐观并发", () => {
     const first = await service.writeAppState({ state: { weight: 85 }, meals: [], revision: 0 }, userId);
     const result = await service.writeAppState(
       {
-        state: { schemaVersion: 3, clearedAt: "2036-08-30T00:00:00.000Z", weight: 999 },
+        state: { schemaVersion: 3, clearedAt: "2036-08-30T00:00:00.000Z" },
         meals: null,
         revision: first.revision,
       },

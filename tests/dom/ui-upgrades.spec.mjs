@@ -29,6 +29,31 @@ test("首页记录入口在首屏可达，身体表单仍能保存并更新概�
   await expect(page.locator("[data-meal-form]")).toBeVisible();
 });
 
+test("首页及数据页的每张趋势图保留有效的独立渐变", async ({ page }) => {
+  await openFreshApp(page);
+  for (const tab of ["home", "data"]) {
+    await seedApp(page, { variant: "full", tab });
+    const charts = page.locator(".line-chart");
+    await expect(charts).toHaveCount(tab === "home" ? 1 : 2);
+    for (const chart of await charts.all()) {
+      const paint = await chart.evaluate((svg) => {
+        const gradient = svg.querySelector("linearGradient");
+        const area = svg.querySelector(".chart-area");
+        const line = svg.querySelector(".chart-line");
+        return {
+          id: gradient.id,
+          fill: getComputedStyle(area).fill,
+          stops: Array.from(gradient.querySelectorAll("stop"), (stop) => getComputedStyle(stop).stopColor),
+          line: getComputedStyle(line).stroke,
+        };
+      });
+      expect(paint.fill).toContain(`#${paint.id}`);
+      expect(paint.stops).toEqual([paint.line, paint.line]);
+      expect(paint.line).toBe(tab === "home" ? "rgb(168, 74, 60)" : "rgb(85, 103, 121)");
+    }
+  }
+});
+
 test("趋势图支持鼠标、触摸点击与键盘等价选点", async ({ page }) => {
   await openFreshApp(page);
   await seedApp(page, { variant: "full", tab: "data" });
@@ -51,6 +76,8 @@ test("趋势图支持鼠标、触摸点击与键盘等价选点", async ({ page 
   await expect(first).toHaveAttribute("aria-pressed", "false");
   await expect(tooltip).toHaveText(await second.getAttribute("aria-label"));
 
+  // 分区间距变化后图表可能靠近固定导航，坐标操作前将整个图表置于可见区域。
+  await chart.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
   const hoverBox = await points.nth(2).boundingBox();
   await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
   await expect(tooltip).toHaveText(await points.nth(2).getAttribute("aria-label"));

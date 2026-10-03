@@ -1,9 +1,78 @@
+import { hasRecordedMeal } from "../meal-entries.js";
+import { todayKey } from "../app-utils.js";
+import { renderEntryList } from "./records.js";
 import { state } from "../app-state.js";
 import { icon, escapeHtml, avg, dateLabel } from "../app-utils.js";
-import { backendStatusText } from "../app-logic.js";
+import { backendStatusText, dailyCalorieEstimate, totalIntake, totalBurned, remainingCalories } from "../app-logic.js";
 
 export function loadingSpinner() {
   return `<span class="button-spinner" aria-hidden="true"></span>`;
+}
+
+function calorieExplanationBody() {
+  const estimate = dailyCalorieEstimate();
+  const budget = Number(state.calorieBudget || 0);
+  const budgetSet = Number.isFinite(budget) && budget > 0;
+  const plannedDeficit = estimate && budgetSet ? estimate.tdee - budget : null;
+  const limited = estimate && estimate.suggested !== estimate.tdee - estimate.dailyDeficit;
+  return `
+      <div class="energy-explanation-body">
+        <p>饮食预算剩余 = 全天饮食预算 − 已记录摄入。活动水平由你在设置中选择；运动热量不直接加回饮食预算。</p>
+        ${
+          estimate
+            ? `
+          <dl class="energy-estimate-breakdown">
+            <div><dt>基础代谢估算</dt><dd>${estimate.bmr} kcal/天</dd></div>
+            <div><dt>预估全天总消耗</dt><dd>${estimate.bmr} × ${estimate.activityFactor} ≈ ${estimate.tdee} kcal/天</dd></div>
+            <div><dt>目标每日缺口</dt><dd>每周减 ${escapeHtml(state.weeklyLossTarget)} kg，折算约 ${estimate.dailyDeficit} kcal/天</dd></div>
+            <div><dt>自动建议饮食预算</dt><dd>${estimate.tdee} − ${estimate.dailyDeficit} = ${estimate.tdee - estimate.dailyDeficit} kcal${limited ? `，按自动估算范围调整为 ${estimate.suggested} kcal` : ""}</dd></div>
+            ${plannedDeficit !== null ? `<div><dt>${plannedDeficit >= 0 ? "按当前预算计划留出的缺口" : "当前预算高于预估消耗"}</dt><dd>${Math.abs(plannedDeficit)} kcal/天</dd></div>` : ""}
+          </dl>
+          <p>基础代谢按建档身体信息估算，公式由你在设置中选择，未选择时不自动估算。活动系数按你选择的日常活动水平计算；全天消耗已包含活动估算，运动热量不再单独相加。</p>
+          <p>每周目标按 7700 kcal/kg 粗略折算，自动建议范围为 1400–2800 kcal。以上均为估算值，实际减重速度会有差异。</p>
+        `
+            : `<p>完善身高、年龄、体重和每周减重目标后，可查看预估全天总消耗及自动建议预算。</p>`
+        }
+        <p>${budgetSet ? `当前饮食预算 ${budget} kcal 是已保存的每日目标。可在“我的 → 设置”中调整，或确认后应用建议预算。` : "保存每日饮食预算后，就能计算预算剩余。"} 预算剩余不是热量缺口，也不需要刻意吃完；摄入只统计已记录的饮食。</p>
+      </div>
+  `;
+}
+
+export function renderCalorieExplanation() {
+  return `<details class="energy-explanation"><summary>热量怎么算</summary>${calorieExplanationBody()}</details>`;
+}
+
+export function renderEnergyBudget() {
+  const estimate = dailyCalorieEstimate();
+  const budget = Number(state.calorieBudget || 0);
+  const budgetSet = Number.isFinite(budget) && budget > 0;
+  const intake = totalIntake();
+  const remaining = remainingCalories();
+  const overBudget = budgetSet && remaining < 0;
+  const equation = overBudget ? `${intake} − ${budget} = ${Math.abs(remaining)} kcal（超出）` : `${budget} − ${intake} = ${remaining} kcal`;
+  return `
+    <div class="energy-budget" aria-label="今日饮食预算与预估消耗">
+      <details class="energy-budget-details">
+        <summary>
+          <span class="energy-estimates">
+            <span><span>预估全天总消耗</span><strong data-energy-tdee>${estimate ? `<span class="energy-approx" aria-hidden="true">≈</span>${estimate.tdee}<small>kcal</small>` : "待完善"}</strong></span>
+            <span><span>全天饮食预算</span><strong data-energy-budget>${budgetSet ? `${budget}<small>kcal</small>` : "待设置"}</strong></span>
+          </span>
+          <span class="energy-records">
+            <span><span>${overBudget ? "预算已超出" : "预算剩余"}</span><strong class="${escapeHtml(overBudget ? "negative" : "")}" data-energy-remaining>${budgetSet ? `${Math.abs(remaining)}<small>kcal</small>` : "待设置"}</strong></span>
+            <span><span>已记录摄入</span><strong data-energy-intake>${intake}<small>kcal</small></strong></span>
+            <span><span>运动消耗</span><strong data-energy-burned>${totalBurned()}<small>kcal</small></strong></span>
+          </span>
+          <span class="energy-summary-footer">
+            <span class="energy-equation" aria-label="${escapeHtml(budgetSet ? (overBudget ? `已记录摄入 ${intake} 减饮食预算 ${budget}，超出预算 ${Math.abs(remaining)} 千卡` : `饮食预算 ${budget} 减已记录摄入 ${intake}，剩余预算 ${remaining} 千卡`) : "每日饮食预算待设置")}">${budgetSet ? equation : "预算待设置"}</span>
+            <span class="energy-disclosure">计算说明${icon("arrow")}</span>
+          </span>
+        </summary>
+        <p class="settings-note">${state.intakeStatus === "complete" ? "饮食已确认完整" : "饮食未确认完整：以上仅为已知营养小计，实际摄入与预算差仍不确定。"}</p>
+        ${calorieExplanationBody()}
+      </details>
+    </div>
+  `;
 }
 
 export function renderSyncStatus() {
@@ -20,11 +89,12 @@ export function renderSyncStatus() {
 }
 
 export function pageHeader(title, subtitle, action = "") {
+  const pageIcon = { home: "home", diet: "fork", training: "dumbbell", data: "chart", profile: "user" }[state.activeTab] || "home";
   return `
     <header class="page-header">
       <div>
         <p class="eyebrow">${subtitle}</p>
-        <h1>${title}</h1>
+        <h1><span class="page-symbol" aria-hidden="true">${icon(pageIcon)}</span>${title}</h1>
       </div>
       <div class="page-header-side">
         ${renderSyncStatus()}
@@ -53,7 +123,7 @@ export function miniMetric(label, value, unit) {
 }
 
 export function renderMeal(meal) {
-  const empty = meal.calories === 0;
+  const empty = !hasRecordedMeal(meal);
   const mealId = meal.id;
   const mealName = meal.name;
   const mealStatus = escapeHtml(meal.status);
@@ -65,7 +135,7 @@ export function renderMeal(meal) {
           <h3>${escapeHtml(mealName)}</h3>
           <span>${mealStatus}</span>
         </div>
-        <strong>${empty ? "--" : meal.calories}<small>kcal</small></strong>
+        <strong>${empty ? "--" : meal.nutritionKnown === false ? "待补充" : meal.calories}<small>kcal</small></strong>
       </div>
       ${
         empty
@@ -80,6 +150,7 @@ export function renderMeal(meal) {
         <button class="meal-repeat-button" type="button" data-repeat-meal="${escapeHtml(mealId)}">${icon("refresh")}再记一次</button>
       `
       }
+      ${renderEntryList(meal, todayKey())}
     </article>
   `;
 }
@@ -93,7 +164,7 @@ export function renderMealTemplate(template) {
         <strong>${escapeHtml(name)}</strong>
         <span>${template.calories} kcal · P${template.protein} C${template.carbs} F${template.fat}</span>
       </div>
-      <button class="mini-icon-button" data-use-template="${escapeHtml(id)}" aria-label="使用${escapeHtml(name)}">${icon("plus")}</button>
+      <button class="meal-repeat-button" type="button" data-rename-template="${escapeHtml(id)}">改名</button><button class="meal-repeat-button" type="button" data-delete-template="${escapeHtml(id)}">删除</button><button class="mini-icon-button" data-use-template="${escapeHtml(id)}" aria-label="使用${escapeHtml(name)}">${icon("plus")}</button>
     </article>
   `;
 }
@@ -102,7 +173,7 @@ export function renderNutritionResult(result) {
   const context = result.context || null;
   const confidence = Number.isFinite(Number(result.confidence)) ? Math.round(Number(result.confidence) * 100) : null;
   const contextLabel = context
-    ? `按 ${escapeHtml(context.amount || "--")}${escapeHtml(context.unit)} · ${escapeHtml(context.cooking)} · 用油 ${escapeHtml(context.oilGrams)}g · 酱料${escapeHtml(context.sauce)} 修正`
+    ? `${Number(context.amount) > 0 ? `按 ${escapeHtml(context.amount)}${escapeHtml(context.unit || "g")}` : "份量不确定"} · ${escapeHtml(context.cooking || "做法不确定")} · ${Number(context.oilGrams) > 0 ? `用油 ${escapeHtml(context.oilGrams)}g` : "用油不确定"} · 酱料${escapeHtml(context.sauce || "不确定")} 修正`
     : "已根据食物内容生成估算，可继续手动微调。";
   return `
     <div class="nutrition-result ${escapeHtml(result.needsReview ? "needs-review" : "")}" role="status" aria-live="polite">
@@ -222,7 +293,7 @@ export function barCard(title, series, unit) {
   const safeValues = safeSeries.map((item) => item.value);
   const maxValue = Math.max(1, ...safeValues.map((value) => Math.abs(value)));
   return `
-    <section class="chart-card">
+    <section class="chart-card content-section section-chart">
       <div class="section-title">
         <h2>${title}</h2>
         <span>${safeValues.length ? Math.round(avg(safeValues)) : "--"} ${unit}</span>
@@ -270,13 +341,13 @@ export function lineChart(series, ariaLabel = "趋势折线图", chartId = "char
       <svg class="line-chart" viewBox="0 0 ${escapeHtml(width)} ${escapeHtml(height)}" role="img" aria-label="${escapeHtml(ariaLabel)}">
         <defs>
           <linearGradient id="${escapeHtml(chartId)}" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#16A77D" stop-opacity="0.22" />
-            <stop offset="100%" stop-color="#16A77D" stop-opacity="0" />
+            <stop offset="0%" stop-opacity="0.22" />
+            <stop offset="100%" stop-opacity="0" />
           </linearGradient>
         </defs>
         ${fillPoints ? `<polyline class="chart-area" points="${escapeHtml(fillPoints)}" fill="url(#${escapeHtml(chartId)})" stroke="none"></polyline>` : ""}
-        ${pointList.length > 1 ? `<polyline class="chart-line" pathLength="1" points="${escapeHtml(points)}" fill="none" stroke="#16A77D" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>` : ""}
-        ${pointList.map(({ x, y, value, readableDate }) => `<circle cx="${escapeHtml(x)}" cy="${escapeHtml(y)}" r="4.5" fill="#ffffff" stroke="#16A77D" stroke-width="3"><title>${escapeHtml(`${readableDate}，${value}${unit}`)}</title></circle>`).join("")}
+        ${pointList.length > 1 ? `<polyline class="chart-line" pathLength="1" points="${escapeHtml(points)}" fill="none" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>` : ""}
+        ${pointList.map(({ x, y, value, readableDate }) => `<circle cx="${escapeHtml(x)}" cy="${escapeHtml(y)}" r="4.5" stroke-width="3"><title>${escapeHtml(`${readableDate}，${value}${unit}`)}</title></circle>`).join("")}
       </svg>
       <div class="chart-point-layer" aria-label="图表数据点">
         ${pointList

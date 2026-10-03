@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const config = vi.hoisted(() => ({}));
 const budget = vi.hoisted(() => ({
+  personalBudget: vi.fn((value) => value),
   assertNutritionOwner: vi.fn(),
   nutritionBudgetStatus: vi.fn(),
   reserveNutritionBudget: vi.fn(),
@@ -14,6 +15,7 @@ const response = (payload, status = 200) => new Response(JSON.stringify(payload)
 let service;
 beforeEach(async () => {
   for (const mock of Object.values(budget)) mock.mockReset();
+  budget.personalBudget.mockImplementation((value) => value);
   budget.reserveNutritionBudget.mockResolvedValue({ reservedCny: 0.1 });
   budget.reportNutritionUsage.mockResolvedValue(null);
   budget.nutritionBudgetStatus.mockResolvedValue({ reservedCny: 0.2 });

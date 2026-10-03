@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/unit/**/*.spec.mjs"],
+    maxWorkers: 4,
     coverage: {
       provider: "v8",
       include: ["src/app-logic.js", "src/app-data.js", "src/app-storage.js", "src/app-sync.js", "server/**/*.mjs"],

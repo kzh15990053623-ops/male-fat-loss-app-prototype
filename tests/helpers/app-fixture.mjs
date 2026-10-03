@@ -102,9 +102,10 @@ export async function seedApp(page, { variant = "full", tab = "home", authentica
         syncError: "",
         syncPending: false,
         preferences: { unit: "metric", reminderTime: "21:30", pushEnabled: false, aiAssist: true },
-        user: { height: 178, age: 34, bmr: 1780, dailyCalories: 1900 },
+        user: { formula: "male", activityLevel: "light", goalMode: "loss", height: 178, age: 34, bmr: 1780, dailyCalories: 1900 },
         mealTemplates: [],
         customActivities: [],
+        intakeStatus: variantName === "full" ? "complete" : "partial",
         dailyRecords: {},
         weightLogs: [],
         waistLogs: [],
@@ -181,6 +182,7 @@ export async function seedApp(page, { variant = "full", tab = "home", authentica
           }
           if (date === "2026-08-09") dayMeals.splice(0, dayMeals.length, ...clone(todayMeals));
           state.dailyRecords[date] = {
+            intakeStatus: variantName === "full" ? "complete" : "partial",
             date,
             meals: dayMeals,
             waterMl: date === "2026-08-09" ? state.waterMl : 1800 + index * 80,
