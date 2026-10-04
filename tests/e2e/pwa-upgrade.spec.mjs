@@ -17,7 +17,7 @@ test("HTTP 500 回退缓存，升级等待所有标签页且各自保留草稿",
     }
     if (url.pathname === "/sw.js") {
       res.writeHead(200, { "Content-Type": "text/javascript", "Cache-Control": "no-store" });
-      res.end(original.replace("fitness-fat-loss-app-shell-v31", "fitness-fat-loss-app-shell-test-" + generation));
+      res.end(original.replace(/fitness-fat-loss-app-shell-v\d+/, "fitness-fat-loss-app-shell-test-" + generation));
       return;
     }
     if (fail) {

@@ -50,7 +50,7 @@ export function renderDietLab() {
       <details class="advanced-fields" ${state.mealDraft.advancedOpen ? "open" : ""}>
         <summary><span>份量与营养细节</span><small>可选 · 用于提升准确度</small></summary>
         <div class="ai-context-grid">
-          <label class="field-label"><span>总量</span><input data-meal-amount name="meal-amount" type="number" inputmode="decimal" autocomplete="off" min="0" max="2000" step="10" value="${escapeHtml(state.mealDraft.amount || "")}" placeholder="300" /></label>
+          <label class="field-label"><span>总量</span><input data-meal-amount name="meal-amount" type="number" inputmode="decimal" autocomplete="off" min="0" max="2000" step="any" value="${escapeHtml(state.mealDraft.amount || "")}" placeholder="300" /></label>
           <label class="field-label"><span>单位</span><select data-meal-unit name="meal-unit" autocomplete="off">${["g", "份", "碗", "个", "杯"].map((unit) => `<option value="${escapeHtml(unit)}" ${state.mealDraft.unit === unit ? "selected" : ""}>${unit}</option>`).join("")}</select></label>
           <label class="field-label"><span>做法</span><select data-meal-cooking name="meal-cooking" autocomplete="off">${["不确定", "清淡", "水煮", "蒸", "烤", "炒", "煎", "油炸"].map((item) => `<option value="${escapeHtml(item)}" ${state.mealDraft.cooking === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
           <label class="field-label"><span>用油 (g)</span><input data-meal-oil name="meal-oil" type="number" inputmode="decimal" autocomplete="off" min="0" max="80" step="1" value="${escapeHtml(state.mealDraft.oilGrams || "")}" placeholder="0" /></label>
