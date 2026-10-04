@@ -298,6 +298,7 @@ export async function completeSetupFromForm() {
   scheduleLocalReminder();
   showToast("基础目标已保存");
   render();
+  requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "instant" }));
 }
 
 function checkBackupSession(userId, generation) {

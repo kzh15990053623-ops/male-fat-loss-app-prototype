@@ -1,4 +1,4 @@
-const CACHE_NAME = "fitness-fat-loss-app-shell-v31";
+const CACHE_NAME = "fitness-fat-loss-app-shell-v32";
 const APP_SHELL = [
   "./src/render/records.js",
   "./src/render/product-info.js",
@@ -12,7 +12,7 @@ const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./src/app.js?v=20261004-maturity-1",
+  "./src/app.js?v=20261005-device-1",
   "./src/app-utils.js",
   "./src/app-state.js",
   "./src/app-data.js",
@@ -38,7 +38,7 @@ const APP_SHELL = [
   "./src/actions/settings.js",
   "./src/actions/training.js",
   "./src/actions/home.js",
-  "./src/styles.css?v=20261004-maturity-1",
+  "./src/styles.css?v=20261005-device-1",
   "./src/styles/tokens.css",
   "./src/styles/base.css",
   "./src/styles/components.css",
